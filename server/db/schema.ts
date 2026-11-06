@@ -71,11 +71,37 @@ export const obligations = pgTable('obligations', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   kind: text('kind').notNull(),
-  remaining: money('remaining'),
+  // The balance on the start date of accounting; the current one follows from the entries.
+  openingBalance: money('opening_balance'),
+  startDate: text('start_date').notNull(),
+  accountId: text('account_id').references(() => accounts.id),
   payment: money('payment'),
   dueDay: integer('due_day').notNull(),
   rate: text('rate').notNull(),
 })
+// Repayments (linked to a transaction) and reconciliations with the bank (migration 9).
+export const obligationEntries = pgTable(
+  'obligation_entries',
+  {
+    id: text('id').primaryKey(),
+    obligationId: text('obligation_id')
+      .notNull()
+      .references(() => obligations.id),
+    kind: text('kind').notNull(),
+    date: text('date').notNull(),
+    principal: numeric('principal', { precision: 16, scale: 0 }).notNull(),
+    interest: numeric('interest', { precision: 16, scale: 0 }).notNull().default('0'),
+    fees: numeric('fees', { precision: 16, scale: 0 }).notNull().default('0'),
+    transactionId: text('transaction_id')
+      .unique()
+      .references(() => transactions.id),
+    early: text('early').notNull().default('none'),
+    previousPayment: numeric('previous_payment', { precision: 16, scale: 0 }),
+    note: text('note').notNull().default(''),
+    createdAt: timestamp('created_at', { mode: 'string' }).notNull().defaultNow(),
+  },
+  (t) => [index('obligation_entries_obligation').on(t.obligationId)],
+)
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),

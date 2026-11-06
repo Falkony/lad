@@ -8,13 +8,16 @@ it('upgrades an existing obligation table without losing its records', async () 
       "CREATE TABLE obligations (id text PRIMARY KEY, title text NOT NULL, kind text NOT NULL, remaining numeric(16,0) NOT NULL CHECK (remaining > 0), payment numeric(16,0) NOT NULL, due_day integer NOT NULL, rate text NOT NULL); INSERT INTO obligations VALUES ('old','Старый долг','debt',10000,1000,10,'0');",
     )
     await db.exec(migration)
-    await db.exec("UPDATE obligations SET remaining = 0 WHERE id = 'old'")
+    await db.exec("UPDATE obligations SET opening_balance = 0 WHERE id = 'old'")
     await db.exec(migration)
     expect(
-      (await db.query<{ remaining: string }>("SELECT remaining FROM obligations WHERE id = 'old'"))
-        .rows[0]!.remaining,
+      (
+        await db.query<{ opening_balance: string }>(
+          "SELECT opening_balance FROM obligations WHERE id = 'old'",
+        )
+      ).rows[0]!.opening_balance,
     ).toBe('0')
-    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(8)
+    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(9)
   } finally {
     await db.close()
   }

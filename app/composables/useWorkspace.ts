@@ -8,6 +8,7 @@ const empty = (): Workspace => ({
   events: [],
   shopping: [],
   obligations: [],
+  obligationEntries: [],
   isDemo: false,
   revision: '0',
   budgets: [],

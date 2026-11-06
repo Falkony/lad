@@ -10,6 +10,7 @@ export default defineNuxtConfig({
     '~/assets/css/iteration-two.css',
     '~/assets/css/planning.css',
     '~/assets/css/forecast.css',
+    '~/assets/css/obligations.css',
     '~/assets/css/theme.css',
   ],
   ssr: false,

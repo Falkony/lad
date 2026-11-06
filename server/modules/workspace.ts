@@ -9,6 +9,7 @@ import {
   events,
   shopping,
   obligations,
+  obligationEntries,
   settings,
   workspaceGuard,
   budgets,
@@ -22,7 +23,6 @@ import {
   goalSchema,
   eventSchema,
   shoppingSchema,
-  obligationSchema,
   importSchema,
   signedAmount,
   pastDate,
@@ -35,6 +35,17 @@ import type { Workspace } from '../../shared/types'
 import type { CommandResult } from '../../shared/planning-types'
 import { planningCommands, isPlanningCommand, executePlanningCommand } from './planning'
 import { planSchema } from '../../shared/planning-schemas'
+import {
+  obligationCommands,
+  isObligationCommand,
+  executeObligationCommand,
+  syncObligations,
+  afterPlanConfirm,
+  checkTransactionEdit,
+  payObligation,
+} from './obligations'
+import { firstDueDate, suggestSplit } from '../../shared/obligations'
+import { shiftMonth } from '../../shared/planning'
 
 /** Throws 404 when an update/delete touched nothing, so a stale UI does not report success. */
 export function found<T>(rows: T[], message: string): T[] {
@@ -46,7 +57,7 @@ export async function readWorkspace(): Promise<Workspace> {
   const client = await getDb()
   return client.transaction(
     async (db) => {
-      const [a, t, g, e, s, o, meta, guard, b, r, v, p] = await Promise.all([
+      const [a, t, g, e, s, o, oe, meta, guard, b, r, v, p] = await Promise.all([
         db.select().from(accounts).orderBy(accounts.name, accounts.id),
         db
           .select()
@@ -55,7 +66,11 @@ export async function readWorkspace(): Promise<Workspace> {
         db.select().from(goals),
         db.select().from(events),
         db.select().from(shopping),
-        db.select().from(obligations),
+        db.select().from(obligations).orderBy(obligations.title),
+        db
+          .select()
+          .from(obligationEntries)
+          .orderBy(desc(obligationEntries.date), desc(obligationEntries.createdAt)),
         db.select().from(settings),
         db.select().from(workspaceGuard),
         db.select().from(budgets),
@@ -71,6 +86,7 @@ export async function readWorkspace(): Promise<Workspace> {
         events: e,
         shopping: s,
         obligations: o,
+        obligationEntries: oe,
         isDemo: meta.some((x) => x.key === 'demo' && x.value === 'true'),
         revision: guard[0]!.revision,
         budgets: b,
@@ -85,6 +101,7 @@ export async function readWorkspace(): Promise<Workspace> {
 
 export const commandSchema = z.discriminatedUnion('op', [
   ...planningCommands,
+  ...obligationCommands,
   z.object({ op: z.literal('account.create'), data: accountSchema }),
   z.object({
     op: z.literal('account.update'),
@@ -149,14 +166,6 @@ export const commandSchema = z.discriminatedUnion('op', [
       date: pastDate('Дата покупки не может быть в будущем'),
     }),
   }),
-  z.object({ op: z.literal('obligation.create'), data: obligationSchema }),
-  z.object({
-    op: z.literal('obligation.update'),
-    id: z.uuid(),
-    data: obligationSchema,
-    expectedRevision: revision.optional(),
-  }),
-  z.object({ op: z.literal('obligation.delete'), id: z.uuid() }),
   z.object({ op: z.literal('import'), data: importSchema }),
   z.object({ op: z.literal('demo.load') }),
   z.object({ op: z.literal('workspace.reset'), confirmation: z.literal('УДАЛИТЬ') }),
@@ -175,8 +184,22 @@ export async function executeCommand(command: Command) {
       .from(workspaceGuard)
       .where(eq(workspaceGuard.id, 1))
       .for('update')
+    const revisionBefore = guard!.revision
     if (isPlanningCommand(command)) {
-      const result = await executePlanningCommand(db, command, guard!.revision)
+      // The schedule of an obligation is edited through the obligation itself.
+      if ('id' in command && command.id && command.op.startsWith('plan.')) {
+        const [plan] = await db.select().from(plans).where(eq(plans.id, command.id))
+        if (plan?.source === 'obligation')
+          throw createError({
+            statusCode: 400,
+            message:
+              'Этот график платежей ведётся в разделе «Кредиты и долги». Измените обязательство.',
+          })
+      }
+      const result = await executePlanningCommand(db, command, revisionBefore)
+      if (command.op === 'occurrence.confirm' && result.transactionId && !result.alreadyPaid)
+        await afterPlanConfirm(db, command.planId, result.transactionId)
+      await syncObligations(db, revisionBefore)
       await db
         .update(workspaceGuard)
         .set({ revision: sql`${workspaceGuard.revision} + 1` })
@@ -195,6 +218,15 @@ export async function executeCommand(command: Command) {
         message: 'Данные изменились в другой вкладке. Проверьте их и сохраните ещё раз.',
       })
     let result: CommandResult = { ok: true }
+    if (isObligationCommand(command)) {
+      result = await executeObligationCommand(db, command, revisionBefore)
+      await syncObligations(db, revisionBefore)
+      await db
+        .update(workspaceGuard)
+        .set({ revision: sql`${workspaceGuard.revision} + 1` })
+        .where(eq(workspaceGuard.id, 1))
+      return result
+    }
     switch (command.op) {
       case 'account.create':
         await db.insert(accounts).values({
@@ -220,6 +252,7 @@ export async function executeCommand(command: Command) {
       }
       case 'account.delete': {
         const references = await Promise.all([
+          db.select().from(obligations).where(eq(obligations.accountId, command.id)).limit(1),
           db.select().from(plans).where(eq(plans.accountId, command.id)).limit(1),
           db.select().from(planVersions).where(eq(planVersions.accountId, command.id)).limit(1),
           db
@@ -231,7 +264,7 @@ export async function executeCommand(command: Command) {
         if (references.some((rows) => rows.length))
           throw createError({
             statusCode: 409,
-            message: 'Счёт связан с расписанием платежей. Используйте архив.',
+            message: 'Счёт связан с расписанием платежей или обязательством. Используйте архив.',
           })
         const history = await db
           .select()
@@ -340,6 +373,7 @@ export async function executeCommand(command: Command) {
           importAccountId:
             previous?.importAccountId || (previous?.importKey ? previous.accountId : null),
         }
+        if (command.op === 'transaction.update') await checkTransactionEdit(db, command.id, data)
         if (command.op === 'transaction.update')
           await db.update(transactions).set(data).where(eq(transactions.id, command.id))
         else await db.insert(transactions).values({ id: crypto.randomUUID(), ...data })
@@ -456,25 +490,6 @@ export async function executeCommand(command: Command) {
         })
         break
       }
-      case 'obligation.create':
-        await db.insert(obligations).values({ id: crypto.randomUUID(), ...command.data })
-        break
-      case 'obligation.update':
-        found(
-          await db
-            .update(obligations)
-            .set(command.data)
-            .where(eq(obligations.id, command.id))
-            .returning(),
-          'Обязательство не найдено',
-        )
-        break
-      case 'obligation.delete':
-        found(
-          await db.delete(obligations).where(eq(obligations.id, command.id)).returning(),
-          'Обязательство не найдено',
-        )
-        break
       case 'import': {
         let imported = 0
         await db.transaction(async (tx) => {
@@ -511,6 +526,8 @@ export async function executeCommand(command: Command) {
             message: 'Пространство изменилось после предпросмотра. Загрузите копию заново.',
           })
         const backup = command.backup
+        await db.delete(obligationEntries)
+        await db.delete(obligations)
         await db.delete(planOccurrences)
         await db.delete(planVersions)
         await db.delete(plans)
@@ -520,7 +537,6 @@ export async function executeCommand(command: Command) {
         await db.delete(goals)
         await db.delete(events)
         await db.delete(shopping)
-        await db.delete(obligations)
         await db.delete(settings)
         const chunks = <T>(rows: T[]) =>
           Array.from({ length: Math.ceil(rows.length / 500) }, (_, i) =>
@@ -538,11 +554,15 @@ export async function executeCommand(command: Command) {
         for (const rows of chunks(backup.planVersions)) await db.insert(planVersions).values(rows)
         for (const rows of chunks(backup.planOccurrences))
           await db.insert(planOccurrences).values(rows)
+        for (const rows of chunks(backup.obligationEntries))
+          await db.insert(obligationEntries).values(rows)
         await db.insert(settings).values({ key: 'demo', value: String(backup.isDemo) })
         break
       }
       case 'workspace.reset': {
         await db.transaction(async (tx) => {
+          await tx.delete(obligationEntries)
+          await tx.delete(obligations)
           await tx.delete(planOccurrences)
           await tx.delete(planVersions)
           await tx.delete(plans)
@@ -552,12 +572,13 @@ export async function executeCommand(command: Command) {
           await tx.delete(goals)
           await tx.delete(events)
           await tx.delete(shopping)
-          await tx.delete(obligations)
           await tx.delete(settings)
         })
         break
       }
     }
+    // Deleting or restoring a transaction changes the balance of an obligation it repaid.
+    await syncObligations(db, revisionBefore)
     await db
       .update(workspaceGuard)
       .set({ revision: sql`${workspaceGuard.revision} + 1` })
@@ -589,7 +610,14 @@ async function seedDemo() {
       savings = crypto.randomUUID(),
       cash = crypto.randomUUID()
     await tx.insert(accounts).values([
-      { id: main, name: 'Основная карта', kind: 'card', openingBalance: '8640000', color: 'green' },
+      // The opening balance covers last month's loan payments recorded below.
+      {
+        id: main,
+        name: 'Основная карта',
+        kind: 'card',
+        openingBalance: '14760000',
+        color: 'green',
+      },
       {
         id: savings,
         name: 'Накопления',
@@ -772,12 +800,16 @@ async function seedDemo() {
         checked: false,
       },
     ])
-    await tx.insert(obligations).values([
+    // Loans are accounted from the first day of last month; that month's payments are recorded.
+    const startDate = `${shiftMonth(day(0).slice(0, 7), -1)}-01`
+    const loans = [
       {
         id: crypto.randomUUID(),
         title: 'Ипотека · наша квартира',
-        kind: 'mortgage',
-        remaining: '485000000',
+        kind: 'mortgage' as const,
+        openingBalance: '485000000',
+        startDate,
+        accountId: main,
         payment: '4250000',
         dueDay: 8,
         rate: '8.5',
@@ -785,13 +817,43 @@ async function seedDemo() {
       {
         id: crypto.randomUUID(),
         title: 'Кредит на автомобиль',
-        kind: 'credit',
-        remaining: '38000000',
+        kind: 'credit' as const,
+        openingBalance: '38000000',
+        startDate,
+        accountId: main,
         payment: '1870000',
         dueDay: 20,
         rate: '14.9',
       },
-    ])
+    ]
+    await tx.insert(obligations).values(loans)
+    await syncObligations(tx, '0')
+    for (const loan of loans) {
+      const dueDate = firstDueDate(startDate, loan.dueDay)
+      const { principal, interest } = suggestSplit(
+        BigInt(loan.openingBalance),
+        loan.rate,
+        BigInt(loan.payment),
+        false,
+      )
+      await payObligation(
+        tx,
+        {
+          obligationId: loan.id,
+          date: dueDate,
+          principal: principal.toString(),
+          interest: interest.toString(),
+          fees: '0',
+          mode: 'create',
+          accountId: main,
+          dueDate,
+          early: 'none',
+          note: '',
+        },
+        '0',
+      )
+    }
+    await syncObligations(tx, '0')
     await tx.insert(budgets).values(
       [
         ['Продукты', '3000000'],
@@ -815,16 +877,6 @@ async function seedDemo() {
         frequency: 'monthly' as const,
         startDate: day(5),
         note: 'Проверить сумму в личном кабинете перед оплатой',
-      },
-      {
-        direction: 'expense' as const,
-        title: 'Платёж по ипотеке',
-        category: 'Дом',
-        amount: '4250000',
-        accountId: main,
-        frequency: 'once' as const,
-        startDate: day(3),
-        note: 'Проверьте остаток на счёте накануне платежа',
       },
       {
         direction: 'income' as const,

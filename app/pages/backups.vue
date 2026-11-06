@@ -17,6 +17,7 @@ const sections = [
   { key: 'events', label: 'Записи календаря' },
   { key: 'shopping', label: 'Товары' },
   { key: 'obligations', label: 'Обязательства' },
+  { key: 'obligationEntries', label: 'Погашения и сверки обязательств' },
   { key: 'budgets', label: 'Лимиты бюджета' },
   { key: 'plans', label: 'Планы поступлений и платежей' },
   { key: 'planOccurrences', label: 'Отметки дат планов' },

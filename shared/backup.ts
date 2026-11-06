@@ -7,6 +7,7 @@ import {
   shoppingSchema,
   obligationSchema,
   signedAmount,
+  amount,
 } from './schemas'
 import type { Workspace } from './types'
 import {
@@ -77,6 +78,26 @@ const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
  * anything malformed is passed through untouched for the schema to report.
  */
 export function upgradeBackup(input: unknown): unknown {
+  return upgradeObligations(upgradePlans(input))
+}
+/**
+ * Copies made before migration 9 store the current balance of an obligation: it becomes the
+ * opening balance on the day of the copy, as the migration does with a database.
+ */
+function upgradeObligations(input: unknown): unknown {
+  if (!isRow(input)) return input
+  const day =
+    typeof input.exportedAt === 'string' && /^\d{4}-\d{2}-\d{2}/.test(input.exportedAt)
+      ? input.exportedAt.slice(0, 10)
+      : null
+  const obligations = rows(input.obligations).map((o) => {
+    if (!isRow(o) || o.openingBalance !== undefined) return o
+    const { remaining, ...rest } = o
+    return { ...rest, openingBalance: remaining, startDate: o.startDate ?? day, accountId: null }
+  })
+  return { ...input, obligations }
+}
+function upgradePlans(input: unknown): unknown {
   if (!isRow(input) || ![1, 2, 3].includes(input.version as number)) return input
   const { recurringPayments, recurringVersions, paymentOccurrences, ...rest } = input
   const plans: unknown[] = rows(recurringPayments).map((r) =>
@@ -141,6 +162,33 @@ export function upgradeBackup(input: unknown): unknown {
   return { ...rest, version: backupVersion, events, plans, planVersions, planOccurrences }
 }
 
+const obligationEntry = z
+  .object({
+    id: z.uuid(),
+    obligationId: z.uuid(),
+    kind: z.enum(['payment', 'adjustment']),
+    date: z.iso.date(),
+    principal: signedAmount,
+    interest: amount.default('0'),
+    fees: amount.default('0'),
+    transactionId: z.uuid().nullable().default(null),
+    early: z.enum(['none', 'term', 'payment']).default('none'),
+    previousPayment: amount.nullable().default(null),
+    note: z.string().max(300).default(''),
+    createdAt: timestamp,
+  })
+  .refine(
+    (e) =>
+      e.kind === 'payment'
+        ? !e.principal.startsWith('-') &&
+          !!e.transactionId &&
+          BigInt(e.principal) + BigInt(e.interest) + BigInt(e.fees) > 0n
+        : BigInt(e.principal) !== 0n &&
+          e.interest === '0' &&
+          e.fees === '0' &&
+          e.transactionId === null,
+    'Некорректная запись погашения',
+  )
 const plan = planSchema.safeExtend({
   id: z.uuid(),
   active: z.boolean(),
@@ -159,6 +207,7 @@ const backupObject = z
     events: z.array(eventSchema.extend({ id: z.uuid() })).max(20000),
     shopping: z.array(shoppingSchema.extend({ id: z.uuid() })).max(10000),
     obligations: z.array(obligationSchema.extend({ id: z.uuid() })).max(10000),
+    obligationEntries: z.array(obligationEntry).max(50000).default([]),
     isDemo: z.boolean().default(false),
     budgets: z
       .array(budgetSchema.extend({ id: z.uuid() }))
@@ -175,6 +224,7 @@ const backupObject = z
       'events',
       'shopping',
       'obligations',
+      'obligationEntries',
       'budgets',
       'plans',
       'planVersions',
@@ -232,6 +282,37 @@ const backupObject = z
         message: 'Нарушено разделение действующих и удалённых операций',
         path: ['deletedTransactions'],
       })
+    const obligations = new Map(backup.obligations.map((o) => [o.id, o])),
+      repaid = new Set<string>()
+    for (const o of backup.obligations)
+      if (o.accountId && !accounts.has(o.accountId))
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Обязательство ссылается на отсутствующий счёт',
+          path: ['obligations'],
+        })
+    const everyTransaction = new Map(
+      [...backup.transactions, ...backup.deletedTransactions].map((t) => [t.id, t]),
+    )
+    for (const entry of backup.obligationEntries) {
+      const owner = obligations.get(entry.obligationId)
+      const tx = entry.transactionId ? everyTransaction.get(entry.transactionId) : undefined
+      const total = BigInt(entry.principal) + BigInt(entry.interest) + BigInt(entry.fees)
+      const issue = (message: string) =>
+        ctx.addIssue({ code: 'custom', message, path: ['obligationEntries'] })
+      if (!owner) issue('Погашение ссылается на отсутствующее обязательство')
+      if (entry.transactionId) {
+        if (
+          !tx ||
+          tx.kind !== (owner?.kind === 'receivable' ? 'income' : 'expense') ||
+          BigInt(tx.amount) !== total
+        )
+          issue('Погашение должно ссылаться на операцию того же направления и суммы')
+        if (repaid.has(entry.transactionId))
+          issue('Одна операция связана с несколькими погашениями')
+        repaid.add(entry.transactionId)
+      }
+    }
     const issue = (message: string) => ctx.addIssue({ code: 'custom', message, path: ['plans'] })
     const plans = new Map(backup.plans.map((p) => [p.id, p])),
       allTransactions = new Map(

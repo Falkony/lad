@@ -62,14 +62,40 @@ export interface ShoppingItem {
   price: string
   checked: boolean
 }
+export type ObligationKind = 'credit' | 'mortgage' | 'debt' | 'receivable'
 export interface Obligation {
   id: string
   title: string
-  kind: string
-  remaining: string
+  kind: ObligationKind
+  /** The principal on `startDate`; the current balance is computed from the entries. */
+  openingBalance: string
+  startDate: string
+  /** Account the payments are usually made from (or a returned debt is received to). */
+  accountId: string | null
   payment: string
   dueDay: number
   rate: string
+}
+export type EarlyRepayment = 'none' | 'term' | 'payment'
+/**
+ * A repayment split into principal, interest and fees and linked to its transaction, or a
+ * reconciliation with the bank (`adjustment`: a signed change of the principal, no transaction).
+ */
+export interface ObligationEntry {
+  id: string
+  obligationId: string
+  kind: 'payment' | 'adjustment'
+  date: string
+  principal: string
+  interest: string
+  fees: string
+  transactionId: string | null
+  /** An early repayment shortens the term or lowers the monthly payment. */
+  early: EarlyRepayment
+  /** The monthly payment before an early repayment lowered it: restored when it is cancelled. */
+  previousPayment: string | null
+  note: string
+  createdAt: string
 }
 export interface Workspace {
   budgets: import('./planning-types').Budget[]
@@ -83,6 +109,7 @@ export interface Workspace {
   events: CalendarEvent[]
   shopping: ShoppingItem[]
   obligations: Obligation[]
+  obligationEntries: ObligationEntry[]
   isDemo: boolean
   revision: string
 }

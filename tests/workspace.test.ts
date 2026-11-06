@@ -85,15 +85,25 @@ describe('persistent workspace', () => {
   it('supports updating a debt to a fully repaid balance', async () => {
     await run({
       op: 'obligation.create',
-      data: { title: 'Долг', kind: 'debt', remaining: '10000', payment: '1000', dueDay: 10 },
+      data: {
+        title: 'Долг',
+        kind: 'debt',
+        openingBalance: '10000',
+        startDate: localDate(),
+        payment: '1000',
+        dueDay: 10,
+      },
     })
     const obligation = (await readWorkspace()).obligations[0]!
     await run({
       op: 'obligation.update',
       id: obligation.id,
-      data: { ...obligation, remaining: '0' },
+      data: { ...obligation, openingBalance: '0' },
     })
-    expect((await readWorkspace()).obligations[0]!.remaining).toBe('0')
+    const state = await readWorkspace()
+    expect(state.obligations[0]!.openingBalance).toBe('0')
+    // A repaid debt has no more scheduled payments.
+    expect(state.plans.filter((p) => p.source === 'obligation')).toEqual([])
   })
   it('requires explicit reset confirmation', () => {
     expect(commandSchema.safeParse({ op: 'workspace.reset', confirmation: '' }).success).toBe(false)

@@ -76,7 +76,9 @@ export const shoppingSchema = z.object({
 export const obligationSchema = z.object({
   title,
   kind: z.enum(['credit', 'mortgage', 'debt', 'receivable']),
-  remaining: amount,
+  openingBalance: amount,
+  startDate: date,
+  accountId: z.uuid().nullable().default(null),
   payment: amount,
   dueDay: z.number().int().min(1).max(31),
   rate: z

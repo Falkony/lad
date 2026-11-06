@@ -166,9 +166,11 @@ function status(plan: Plan) {
               :name="
                 plan.direction === 'income'
                   ? 'income'
-                  : plan.frequency === 'once'
-                    ? 'calendar'
-                    : 'repeat'
+                  : plan.source === 'obligation'
+                    ? 'bank'
+                    : plan.frequency === 'once'
+                      ? 'calendar'
+                      : 'repeat'
               "
               :size="22"
           /></span>
@@ -180,7 +182,16 @@ function status(plan: Plan) {
               }}{{ plan.holidayShift === 'before' ? ' · с выходных раньше' : '' }}</span
             >
           </div>
+          <NuxtLink
+            v-if="plan.source === 'obligation'"
+            class="icon-button"
+            :to="`/obligations/${plan.sourceId}`"
+            :aria-label="`Открыть обязательство ${plan.title}`"
+          >
+            <AppIcon name="bank" :size="17" />
+          </NuxtLink>
           <button
+            v-else
             class="icon-button"
             :aria-label="`Редактировать план ${plan.title}`"
             @click="edit(plan)"
@@ -198,7 +209,11 @@ function status(plan: Plan) {
               ? w.accounts.find((a) => a.id === plan.accountId)?.name
               : 'Счёт выбирается при подтверждении'
           }}</span
-          ><span class="rule-actions"
+          ><span v-if="plan.source === 'obligation'" class="rule-actions"
+            ><NuxtLink class="text-button" :to="`/obligations/${plan.sourceId}`"
+              >График ведётся в «Кредиты и долги»</NuxtLink
+            ></span
+          ><span v-else class="rule-actions"
             ><button
               v-if="plan.frequency !== 'once'"
               class="text-button"

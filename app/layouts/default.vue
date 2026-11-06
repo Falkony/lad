@@ -42,6 +42,10 @@ const links = [
   { to: '/shopping', label: 'Список покупок', icon: 'shopping' },
   { to: '/backups', label: 'Резервные копии', icon: 'file' },
 ]
+/** The section of the page, nested pages included (/obligations/… is «Кредиты и долги»). */
+const current = computed(() =>
+  links.find((x) => (x.to === '/' ? route.path === '/' : route.path.startsWith(x.to))),
+)
 watch(
   () => route.path,
   () => {
@@ -91,7 +95,7 @@ async function reset() {
           v-for="link in links"
           :key="link.to"
           :to="link.to"
-          :class="['nav-link', { active: route.path === link.to }]"
+          :class="['nav-link', { active: link === current }]"
           ><AppIcon :name="link.icon" :size="19" /><span>{{ link.label }}</span
           ><span
             v-if="link.to === '/shopping' && workspace.shopping.filter((x) => !x.checked).length"
@@ -126,7 +130,7 @@ async function reset() {
           <button class="icon-button mobile-menu" aria-label="Открыть меню" @click="menu = true">
             <AppIcon name="menu" /></button
           ><span>Моё пространство</span><span class="breadcrumb-divider">/</span
-          ><strong>{{ links.find((x) => x.to === route.path)?.label || 'Лад' }}</strong>
+          ><strong>{{ current?.label || 'Лад' }}</strong>
         </div>
         <div class="topbar-actions">
           <span class="local-indicator"><i />Локальная версия</span

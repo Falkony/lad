@@ -12,6 +12,13 @@ const mode = ref('create'),
   revision = ref(''),
   error = ref('')
 const income = computed(() => item.value?.direction === 'income')
+/** A date of an obligation schedule: the payment is split into principal and interest. */
+const obligation = computed(() => {
+  const plan = w.value.plans.find((p) => p.id === item.value?.planId)
+  return plan?.source === 'obligation'
+    ? w.value.obligations.find((o) => o.id === plan.sourceId)
+    : undefined
+})
 watch(item, (value) => {
   if (!value) return
   mode.value = 'create'
@@ -32,6 +39,7 @@ const available = computed(() =>
     (t) =>
       t.kind === item.value?.direction &&
       !w.value.planOccurrences.some((p) => p.transactionId === t.id) &&
+      !w.value.obligationEntries.some((e) => e.transactionId === t.id) &&
       `${t.description} ${t.category} ${t.date} ${money(t.amount)}`
         .toLocaleLowerCase('ru')
         .includes(search.value.toLocaleLowerCase('ru')),
@@ -136,6 +144,11 @@ async function save() {
           Подходящих несвязанных операций нет. Измените поиск или запишите новую операцию.
         </p></template
       >
+      <p v-if="obligation" class="form-hint">
+        Платёж по обязательству: проценты за месяц вычтутся по расчёту, остальное уменьшит долг.
+        Точное разделение по выписке можно указать в
+        <NuxtLink :to="`/obligations/${obligation.id}`">«{{ obligation.title }}»</NuxtLink>.
+      </p>
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
       <button
         class="button primary full"

@@ -232,7 +232,14 @@ describe('backup validation and atomic restoration', () => {
     await run({ op: 'shopping.create', data: { title: 'Хлеб' } })
     await run({
       op: 'obligation.create',
-      data: { title: 'Долг', kind: 'debt', remaining: '100', payment: '0', dueDay: 5 },
+      data: {
+        title: 'Долг',
+        kind: 'debt',
+        openingBalance: '100',
+        startDate: localDate(),
+        payment: '0',
+        dueDay: 5,
+      },
     })
     await run({ op: 'transaction.create', data: expense(a) })
     await run({ op: 'transaction.delete', id: (await readWorkspace()).transactions[0]!.id })

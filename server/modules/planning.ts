@@ -153,6 +153,8 @@ export async function executePlanningCommand(
   db: WriteTransaction,
   command: PlanningCommand,
   currentRevision: string,
+  /** Internal callers: the owner of a plan they create (an obligation's payment schedule). */
+  owner: { source: 'obligation'; sourceId: string } | null = null,
 ): Promise<CommandResult> {
   switch (command.op) {
     case 'budget.set':
@@ -216,8 +218,8 @@ export async function executePlanningCommand(
           ...command.data,
           active: true,
           direction: command.direction,
-          source: 'manual',
-          sourceId: null,
+          source: owner?.source || 'manual',
+          sourceId: owner?.sourceId || null,
         })
         await addSchedule(db, id, command.data, command.data.startDate)
       } else if (once) {
