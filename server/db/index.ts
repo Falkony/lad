@@ -1,3 +1,4 @@
+import { configureTimeZone } from '../../shared/time-zone'
 import { PGlite } from '@electric-sql/pglite'
 import { drizzle as embeddedDrizzle } from 'drizzle-orm/pglite'
 import { drizzle as postgresDrizzle } from 'drizzle-orm/postgres-js'
@@ -54,6 +55,8 @@ async function connect() {
   if (process.env.DATABASE_URL) {
     const client = postgres(process.env.DATABASE_URL, { max: 5 })
     await client.unsafe(migration)
+    const [zone] = await client.unsafe("SELECT value FROM settings WHERE key='time_zone'")
+    configureTimeZone(zone?.value || 'Europe/Moscow')
     return postgresDrizzle(client, { schema })
   }
   const dataDir = resolve(process.env.LAD_DATA_DIR || '.data/lad')
@@ -61,6 +64,10 @@ async function connect() {
   await lockDataDir(dataDir)
   const client = new PGlite(dataDir)
   await client.exec(migration)
+  const zone = await client.query<{ value: string }>(
+    "SELECT value FROM settings WHERE key='time_zone'",
+  )
+  configureTimeZone(zone.rows[0]?.value || 'Europe/Moscow')
   return embeddedDrizzle(client, { schema })
 }
 let connection: ReturnType<typeof connect> | undefined

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Plan, PlanDirection, PlanFrequency } from '../../shared/planning-types'
-import { categories } from '../../shared/types'
+const { categoryNames: categories } = useCategories()
 import { localDate, toMinor, toMajor } from '../../shared/money'
 const props = defineProps<{
   plan?: Plan | null
@@ -74,7 +74,9 @@ const options = computed(() => {
   const kind = direction.value
   return [
     ...new Set([
-      ...(kind === 'income' ? ['Зарплата', 'Другое'] : categories.filter((c) => c !== 'Зарплата')),
+      ...(kind === 'income'
+        ? ['Зарплата', 'Другое']
+        : categories.value.filter((c) => c !== 'Зарплата')),
       ...w.value.transactions.filter((t) => t.kind === kind).map((t) => t.category),
       ...w.value.plans.filter((p) => p.direction === kind).map((p) => p.category),
     ]),

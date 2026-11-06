@@ -1,3 +1,5 @@
+import { categorySchema, withCategoryIds } from './categories'
+import { validTimeZone } from './time-zone'
 import { z } from 'zod'
 import { commandHistoryEntrySchema, type CommandHistoryEntry } from './command-history'
 import {
@@ -22,7 +24,7 @@ import {
 type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-export const backupVersion = 5
+export const backupVersion = 6
 export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
@@ -48,6 +50,7 @@ const transaction = z
   .object({
     ...transactionSchema.shape,
     id: z.uuid(),
+    categoryId: z.uuid(),
     kind: z.enum(['expense', 'income', 'transfer', 'adjustment']),
     amount: signedAmount,
     // Stored history is restored as is: "not in the future" applies to new input only.
@@ -81,8 +84,13 @@ const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
  */
 export function upgradeBackup(input: unknown): unknown {
   const upgraded = upgradeObligations(upgradePlans(input))
-  if (isRow(input) && [1, 2, 3, 4].includes(input.version as number) && isRow(upgraded))
-    return { ...upgraded, version: backupVersion, commandHistory: [] }
+  if (isRow(input) && [1, 2, 3, 4, 5].includes(input.version as number) && isRow(upgraded))
+    return withCategoryIds({
+      ...upgraded,
+      timeZone: upgraded.timeZone || 'Europe/Moscow',
+      version: backupVersion,
+      commandHistory: input.version === 5 ? upgraded.commandHistory : [],
+    })
   return upgraded
 }
 /**
@@ -196,6 +204,7 @@ const obligationEntry = z
   )
 const plan = planSchema.safeExtend({
   id: z.uuid(),
+  categoryId: z.uuid(),
   active: z.boolean(),
   direction: directionSchema,
   source: z.enum(['manual', 'obligation', 'goal']).default('manual'),
@@ -204,6 +213,8 @@ const plan = planSchema.safeExtend({
 const backupObject = z
   .object({
     version: z.literal(backupVersion),
+    categories: z.array(categorySchema).max(10000),
+    timeZone: z.string().refine(validTimeZone),
     exportedAt: z.iso.datetime(),
     accounts: z.array(account).max(1000),
     transactions: z.array(transaction).max(50000),
@@ -215,16 +226,23 @@ const backupObject = z
     obligationEntries: z.array(obligationEntry).max(50000).default([]),
     isDemo: z.boolean().default(false),
     budgets: z
-      .array(budgetSchema.extend({ id: z.uuid() }))
+      .array(budgetSchema.extend({ id: z.uuid(), categoryId: z.uuid() }))
       .max(20000)
       .default([]),
     plans: z.array(plan).max(20000).default([]),
-    planVersions: z.array(planVersionSchema).max(50000).default([]),
-    planOccurrences: z.array(occurrenceSchema).max(50000).default([]),
+    planVersions: z
+      .array(planVersionSchema.safeExtend({ categoryId: z.uuid() }))
+      .max(50000)
+      .default([]),
+    planOccurrences: z
+      .array(occurrenceSchema.safeExtend({ categoryId: z.uuid() }))
+      .max(50000)
+      .default([]),
     commandHistory: z.array(commandHistoryEntrySchema).max(100000),
   })
   .superRefine((backup, ctx) => {
     for (const key of [
+      'categories',
       'accounts',
       'goals',
       'events',
@@ -248,6 +266,18 @@ const backupObject = z
         ids.add(row.id)
       }
     }
+    const categoryIds = new Set(backup.categories.map((c) => c.id))
+    for (const section of [
+      'transactions',
+      'deletedTransactions',
+      'budgets',
+      'plans',
+      'planVersions',
+      'planOccurrences',
+    ] as const)
+      for (const row of backup[section])
+        if (!(row as any).categoryId || !categoryIds.has((row as any).categoryId))
+          ctx.addIssue({ code: 'custom', message: 'Категория не найдена', path: [section] })
     const revisions = new Set<string>()
     for (const entry of backup.commandHistory) {
       if (!/^[1-9]\d{0,19}$/.test(entry.revision)) continue
@@ -396,10 +426,11 @@ export function createBackup(
   workspace: Workspace & { commandHistory?: CommandHistoryEntry[] },
 ): Backup {
   const { revision: _revision, ...data } = workspace
-  return {
+  return withCategoryIds({
+    timeZone: workspace.timeZone || 'Europe/Moscow',
     ...data,
     commandHistory: workspace.commandHistory || [],
     version: backupVersion,
     exportedAt: new Date().toISOString(),
-  } as Backup
+  }) as Backup
 }

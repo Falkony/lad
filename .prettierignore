@@ -5,3 +5,4 @@ node_modules
 .sites-runtime
 artifacts
 package-lock.json
+.claude

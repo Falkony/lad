@@ -5,6 +5,19 @@ import { forecastMigration } from './forecast-migration'
 import { payDaysMigration } from './pay-days-migration'
 import { obligationMigration } from './obligation-migration'
 import { commandHistoryMigration } from './command-history-migration'
+import { foundationMigration } from './foundation-migration'
+
+export const migrationSteps = [
+  { version: 4, sql: repairImportOrigin },
+  { version: 5, sql: planningMigration },
+  { version: 6, sql: unifiedPlanMigration },
+  { version: 7, sql: forecastMigration },
+  { version: 8, sql: payDaysMigration },
+  { version: 9, sql: obligationMigration },
+  { version: 10, sql: commandHistoryMigration },
+  { version: 11, sql: foundationMigration },
+]
+export const latestMigrationVersion = migrationSteps.at(-1)!.version
 
 // Bootstrap for new databases followed by guarded, versioned upgrades for existing ones.
 export const migration = `
@@ -46,12 +59,12 @@ DO $$ BEGIN
     INSERT INTO lad_migrations (version) VALUES (3);
   END IF;
 END $$;
-${repairImportOrigin}
-${planningMigration}
-${unifiedPlanMigration}
-${forecastMigration}
-${payDaysMigration}
-${obligationMigration}
-${commandHistoryMigration}
+${migrationSteps.map((step) => step.sql).join('\n')}
 COMMIT;
 `
+
+export function migrationThrough(version: number) {
+  return migrationSteps
+    .filter((step) => step.version > version)
+    .reduce((source, step) => source.replace(step.sql, ''), migration)
+}

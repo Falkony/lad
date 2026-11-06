@@ -42,6 +42,7 @@ const links = [
   { to: '/shopping', label: 'Список покупок', icon: 'shopping' },
   { to: '/backups', label: 'Резервные копии', icon: 'file' },
   { to: '/history', label: 'История изменений', icon: 'file' },
+  { to: '/settings', label: 'Настройки', icon: 'file' },
 ]
 /** The section of the page, nested pages included (/obligations/… is «Кредиты и долги»). */
 const current = computed(() =>

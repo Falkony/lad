@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { PGlite } from '@electric-sql/pglite'
-import { backupSchema } from '../shared/backup'
+import { backupSchema, backupVersion } from '../shared/backup'
 import { localDate } from '../shared/money'
 
 let root: string
@@ -213,7 +213,7 @@ describe('automatic backups', () => {
     const saved = backupSchema.parse(
       JSON.parse(await readFile(join(status.directory, status.files[0]!.name), 'utf8')),
     )
-    expect(saved.version).toBe(5)
+    expect(saved.version).toBe(backupVersion)
     expect(saved.commandHistory.some((entry) => entry.operation === 'demo.load')).toBe(true)
     expect(saved.obligationEntries.length).toBeGreaterThan(0)
     expect(saved.plans.length).toBeGreaterThan(0)

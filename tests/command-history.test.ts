@@ -13,7 +13,7 @@ import {
 import { readCommandHistory } from '../server/modules/command-history'
 import { backupSchema, createBackup } from '../shared/backup'
 import { commandHistoryMigration } from '../server/db/command-history-migration'
-import { migration } from '../server/db/migration'
+import { migration, migrationThrough } from '../server/db/migration'
 import { localDate } from '../shared/money'
 
 const run = (input: unknown) => executeCommand(commandSchema.parse(input))
@@ -209,7 +209,7 @@ describe('transactional command history', () => {
     expect(entries.at(-1)).toMatchObject({
       operation: 'workspace.restore',
       revision: '9001',
-      payload: { backup: { version: 5, exportedAt: backup.exportedAt } },
+      payload: { backup: { version: backup.version, exportedAt: backup.exportedAt } },
     })
     const metadata = entries.at(-1)!.payload.backup as Record<string, unknown>
     expect(metadata.sha256).toMatch(/^[0-9a-f]{64}$/)
@@ -249,7 +249,7 @@ describe('transactional command history', () => {
   it('migrates version 9 without changing records or revision and is safe to repeat', async () => {
     const db = new PGlite()
     try {
-      await db.exec(migration.replace(commandHistoryMigration, ''))
+      await db.exec(migrationThrough(9))
       await db.exec(
         "INSERT INTO accounts(id,name,kind,opening_balance,color) VALUES ('legacy','Старый счёт','card',100,'green'); UPDATE workspace_guard SET revision = 42;",
       )

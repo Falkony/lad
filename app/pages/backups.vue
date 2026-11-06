@@ -20,6 +20,7 @@ const backup = ref<Backup | null>(null),
 const stale = computed(() => !!backup.value && previewRevision.value !== w.value.revision)
 const sections = [
   { key: 'accounts', label: 'Счета' },
+  { key: 'categories', label: 'Категории' },
   { key: 'transactions', label: 'Операции' },
   { key: 'deletedTransactions', label: 'Удалённые операции' },
   { key: 'goals', label: 'Цели' },
@@ -226,7 +227,7 @@ async function restore() {
               <tr v-for="section in sections" :key="section.key">
                 <td>{{ section.label }}</td>
                 <td v-if="section.key === 'commandHistory'">Заменяется из копии</td>
-                <td v-else>{{ w[section.key].length }}</td>
+                <td v-else>{{ w[section.key]?.length || 0 }}</td>
                 <td>{{ backup[section.key].length }}</td>
               </tr>
             </tbody>

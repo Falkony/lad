@@ -24,6 +24,11 @@ export interface CommandHistoryPage {
 }
 
 export const commandLabels: Record<string, string> = {
+  'category.create': 'Создание категории',
+  'category.rename': 'Переименование категории',
+  'category.archive': 'Архивация категории',
+  'category.merge': 'Объединение категорий',
+  'settings.update': 'Настройка часового пояса',
   'account.create': 'Создание счёта',
   'account.update': 'Изменение счёта',
   'account.archive': 'Архивация или возврат счёта',

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PGlite } from '@electric-sql/pglite'
 import { commandSchema, executeCommand, readWorkspace } from '../server/modules/workspace'
-import { migration } from '../server/db/migration'
+import { migration, migrationThrough } from '../server/db/migration'
 import { forecastMigration } from '../server/db/forecast-migration'
 import { createBackup } from '../shared/backup'
 
@@ -70,7 +70,7 @@ describe('accounts in the forecast', () => {
   it('migration 7 takes savings out of the forecast once', async () => {
     const db = new PGlite()
     try {
-      await db.exec(migration.replace(forecastMigration, ''))
+      await db.exec(migrationThrough(6))
       await db.exec(`
         INSERT INTO accounts (id,name,kind,opening_balance,color) VALUES
           ('a','Карта','card',100,'green'), ('b','Резерв','savings',200,'blue');

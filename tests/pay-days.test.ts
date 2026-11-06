@@ -8,7 +8,7 @@ import { frequencyLabel, projectPlans, recurringDates } from '../shared/planning
 import { planSchema } from '../shared/planning-schemas'
 import type { PlanVersion } from '../shared/planning-types'
 import { commandSchema, executeCommand, readWorkspace } from '../server/modules/workspace'
-import { migration } from '../server/db/migration'
+import { migration, migrationThrough } from '../server/db/migration'
 import { payDaysMigration } from '../server/db/pay-days-migration'
 import { obligationMigration } from '../server/db/obligation-migration'
 import { backupSchema, createBackup } from '../shared/backup'
@@ -270,7 +270,7 @@ describe('pay days on the server', () => {
   it('migration 8 keeps existing plans on their single day', async () => {
     const db = new PGlite()
     try {
-      await db.exec(migration.replace(payDaysMigration, '').replace(obligationMigration, ''))
+      await db.exec(migrationThrough(7))
       await db.exec(`
         INSERT INTO plans (id,title,category,amount,account_id,frequency,interval,start_date,note,direction)
           VALUES ('p','Зарплата','Зарплата',100,NULL,'monthly',1,'2026-01-10','','income');

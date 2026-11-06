@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { commandSchema, executeCommand, readWorkspace } from '../server/modules/workspace'
-import { backupSchema, createBackup } from '../shared/backup'
+import { backupSchema, createBackup, backupVersion } from '../shared/backup'
 import { budgetRows, projectPlans } from '../shared/planning'
 import * as money from '../shared/money'
 import type { PlanFields } from '../shared/planning-types'
@@ -132,7 +132,7 @@ describe('budgets and versioned recurring plans', () => {
       ['2026-03-31', 'skipped', '10000'],
     ])
     expect(state.planOccurrences).toHaveLength(2)
-    expect(createBackup(state).version).toBe(5)
+    expect(createBackup(state).version).toBe(backupVersion)
   })
   it('retains account references even for paused schedules', async () => {
     await run({ op: 'account.create', data: { name: 'Пустой', openingBalance: '0' } })

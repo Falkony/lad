@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { money, sumAmounts, localDate } from '../../shared/money'
-import { categories } from '../../shared/types'
+const { categoryNames: categories } = useCategories()
 const { workspace: w, command, pending } = useWorkspace()
 const route = useRoute()
 const linkedTransaction = ref('')
@@ -103,7 +103,7 @@ const expense = computed(() =>
 )
 const availableCategories = computed(() => [
   ...new Set([
-    ...categories,
+    ...categories.value,
     ...w.value.transactions.map((t) => t.category),
     ...w.value.deletedTransactions.map((t) => t.category),
   ]),

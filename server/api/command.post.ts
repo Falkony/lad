@@ -1,5 +1,7 @@
+import { getDb } from '../db'
 import { commandSchema, executeCommand } from '../modules/workspace'
 export default defineEventHandler(async (event) => {
+  await getDb()
   const body = await readBody(event)
   const parsed = commandSchema.safeParse(body)
   if (!parsed.success)

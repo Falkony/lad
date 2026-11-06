@@ -15,6 +15,16 @@ import type { CommandHistoryEntry } from '../../shared/command-history'
 import { numeric } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 const money = (name: string) => numeric(name, { precision: 16, scale: 0 }).notNull()
+export const categories = pgTable('categories', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  archived: boolean('archived').notNull().default(false),
+})
+const categoryReference = () =>
+  text('category_id')
+    .references(() => categories.id)
+    .default(sql`NULL`)
+    .notNull()
 export const accounts = pgTable('accounts', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -37,6 +47,7 @@ export const transactions = pgTable(
       .references(() => accounts.id),
     toAccountId: text('to_account_id').references(() => accounts.id),
     category: text('category').notNull(),
+    categoryId: categoryReference(),
     description: text('description').notNull(),
     date: text('date').notNull(),
     importKey: text('import_key'),
@@ -134,6 +145,7 @@ export const budgets = pgTable(
     id: text('id').primaryKey(),
     month: text('month').notNull(),
     category: text('category').notNull(),
+    categoryId: categoryReference(),
     limit: money('limit'),
   },
   (t) => [uniqueIndex('budgets_month_category').on(t.month, t.category)],
@@ -141,6 +153,7 @@ export const budgets = pgTable(
 const planFields = () => ({
   title: text('title').notNull(),
   category: text('category').notNull(),
+  categoryId: categoryReference(),
   amount: money('amount'),
   accountId: text('account_id').references(() => accounts.id),
   frequency: text('frequency').notNull(),
@@ -189,6 +202,7 @@ export const planOccurrences = pgTable(
     dueDate: text('due_date').notNull(),
     title: text('title').notNull(),
     category: text('category').notNull(),
+    categoryId: categoryReference(),
     amount: money('amount'),
     accountId: text('account_id').references(() => accounts.id),
     note: text('note').notNull(),

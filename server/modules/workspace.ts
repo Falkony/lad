@@ -13,6 +13,7 @@ import {
   settings,
   workspaceGuard,
   commandHistory,
+  categories as categoryCatalogue,
   budgets,
   plans,
   planVersions,
@@ -48,6 +49,13 @@ import {
 import { firstDueDate, suggestSplit } from '../../shared/obligations'
 import { shiftMonth } from '../../shared/planning'
 import { automaticBackupOptions, createAutomaticBackups } from './automatic-backups'
+import {
+  categoryCommands,
+  isCategoryCommand,
+  executeCategoryCommand,
+  checkCategoryInput,
+} from './categories'
+import { configureTimeZone } from '../../shared/time-zone'
 import { finishCommand } from './command-history'
 import type { CommandHistoryEntry } from '../../shared/command-history'
 
@@ -72,7 +80,7 @@ export async function readWorkspace(
   const client = await getDb()
   return client.transaction(
     async (db) => {
-      const [a, t, g, e, s, o, oe, meta, guard, b, r, v, p] = await Promise.all([
+      const [a, t, g, e, s, o, oe, meta, guard, b, r, v, p, catalogue] = await Promise.all([
         db.select().from(accounts).orderBy(accounts.name, accounts.id),
         db
           .select()
@@ -92,9 +100,12 @@ export async function readWorkspace(
         db.select().from(plans).orderBy(plans.title),
         db.select().from(planVersions),
         db.select().from(planOccurrences),
+        db.select().from(categoryCatalogue).orderBy(categoryCatalogue.name),
       ])
       return {
         accounts: a,
+        categories: catalogue,
+        timeZone: meta.find((item) => item.key === 'time_zone')?.value || 'Europe/Moscow',
         transactions: t.filter((t) => !t.deletedAt),
         deletedTransactions: t.filter((t) => t.deletedAt),
         goals: g,
@@ -125,6 +136,7 @@ export async function readWorkspace(
 export const commandSchema = z.discriminatedUnion('op', [
   ...planningCommands,
   ...obligationCommands,
+  ...categoryCommands,
   z.object({ op: z.literal('account.create'), data: accountSchema }),
   z.object({
     op: z.literal('account.update'),
@@ -223,6 +235,9 @@ async function executeBackedUpCommand(command: Command) {
       })
   }
   const result = await executeWorkspaceCommand(command)
+  if (command.op === 'settings.update') configureTimeZone(command.timeZone)
+  if (command.op === 'workspace.restore') configureTimeZone(command.backup.timeZone)
+  if (command.op === 'workspace.reset') configureTimeZone('Europe/Moscow')
   await backups.afterChange()
   return result
 }
@@ -236,6 +251,7 @@ async function executeWorkspaceCommand(command: Command) {
       .where(eq(workspaceGuard.id, 1))
       .for('update')
     const revisionBefore = guard!.revision
+    await checkCategoryInput(db, command)
     if (command.op === 'demo.load') {
       await seedDemo(db)
       return finishCommand(db, command, { ok: true }, revisionBefore)
@@ -269,6 +285,8 @@ async function executeWorkspaceCommand(command: Command) {
         message: 'Данные изменились в другой вкладке. Проверьте их и сохраните ещё раз.',
       })
     let result: CommandResult = { ok: true }
+    if (isCategoryCommand(command))
+      return finishCommand(db, command, await executeCategoryCommand(db, command), revisionBefore)
     if (isObligationCommand(command)) {
       result = await executeObligationCommand(db, command, revisionBefore)
       await syncObligations(db, revisionBefore)
@@ -586,10 +604,14 @@ async function executeWorkspaceCommand(command: Command) {
         await db.delete(events)
         await db.delete(shopping)
         await db.delete(settings)
+        await db.delete(categoryCatalogue)
         const chunks = <T>(rows: T[]) =>
           Array.from({ length: Math.ceil(rows.length / 500) }, (_, i) =>
             rows.slice(i * 500, (i + 1) * 500),
           )
+        for (const rows of chunks(backup.categories))
+          await db.insert(categoryCatalogue).values(rows)
+        await db.insert(settings).values({ key: 'time_zone', value: backup.timeZone })
         for (const rows of chunks(backup.accounts)) await db.insert(accounts).values(rows)
         for (const rows of chunks([...backup.transactions, ...backup.deletedTransactions]))
           await db.insert(transactions).values(rows)
@@ -624,6 +646,8 @@ async function executeWorkspaceCommand(command: Command) {
           await tx.delete(events)
           await tx.delete(shopping)
           await tx.delete(settings)
+          await tx.delete(categoryCatalogue)
+          await tx.insert(settings).values({ key: 'time_zone', value: 'Europe/Moscow' })
         })
         break
       }

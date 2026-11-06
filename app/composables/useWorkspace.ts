@@ -1,3 +1,4 @@
+import { configureTimeZone } from '../../shared/time-zone'
 import type { Workspace } from '../../shared/types'
 import type { CommandResult } from '../../shared/planning-types'
 const empty = (): Workspace => ({
@@ -36,6 +37,7 @@ export function useWorkspace() {
       const value = await $fetch<Workspace>('/api/workspace')
       if (version === refreshVersion.value) {
         workspace.value = value
+        configureTimeZone(value.timeZone || 'Europe/Moscow')
         error.value = ''
       }
     } catch (failure: any) {

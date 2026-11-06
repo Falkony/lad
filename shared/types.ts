@@ -98,6 +98,8 @@ export interface ObligationEntry {
   createdAt: string
 }
 export interface Workspace {
+  categories?: import('./categories').Category[]
+  timeZone?: string
   budgets: import('./planning-types').Budget[]
   plans: import('./planning-types').Plan[]
   planVersions: import('./planning-types').PlanVersion[]

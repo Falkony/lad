@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { categories, type Transaction } from '../../shared/types'
+import type { Transaction } from '../../shared/types'
+const { categoryNames: categories } = useCategories()
 import { toMinor, toMajor, localDate } from '../../shared/money'
 const props = defineProps<{ transaction?: Transaction | null }>()
 const emit = defineEmits<{ saved: [] }>()
@@ -36,7 +37,7 @@ const availableAccounts = computed(() =>
 )
 const availableCategories = computed(() => [
   ...new Set([
-    ...categories,
+    ...categories.value,
     ...workspace.value.transactions.map((t) => t.category),
     ...(props.transaction ? [props.transaction.category] : []),
   ]),

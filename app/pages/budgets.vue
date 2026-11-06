@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { categories } from '../../shared/types'
+const { categoryNames: categories } = useCategories()
 import { budgetRows, categorySpending, monthPlan, shiftMonth } from '../../shared/planning'
 import { localDate, money, sumAmounts, toMinor, toMajor } from '../../shared/money'
 import type { Budget } from '../../shared/planning-types'
@@ -25,7 +25,7 @@ const totalLimit = computed(() => sumAmounts(rows.value.map((r) => r.limit))),
   totalSpent = computed(() => sumAmounts(rows.value.map((r) => r.spent)))
 const options = computed(() => [
   ...new Set([
-    ...categories.filter((c) => c !== 'Зарплата'),
+    ...categories.value.filter((c) => c !== 'Зарплата'),
     ...w.value.transactions.filter((t) => t.kind === 'expense').map((t) => t.category),
     ...w.value.plans.filter((p) => p.direction === 'expense').map((p) => p.category),
   ]),

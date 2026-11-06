@@ -1,6 +1,6 @@
 import { it, expect } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
-import { migration } from '../server/db/migration'
+import { migration, latestMigrationVersion } from '../server/db/migration'
 it('upgrades an existing obligation table without losing its records', async () => {
   const db = new PGlite()
   try {
@@ -17,7 +17,9 @@ it('upgrades an existing obligation table without losing its records', async () 
         )
       ).rows[0]!.opening_balance,
     ).toBe('0')
-    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(10)
+    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(
+      latestMigrationVersion,
+    )
   } finally {
     await db.close()
   }

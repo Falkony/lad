@@ -1,3 +1,4 @@
+import { dateInTimeZone } from './time-zone'
 import Decimal from 'decimal.js'
 import type { Account, Transaction } from './types'
 
@@ -41,5 +42,5 @@ export function accountBalance(account: Account, transactions: Transaction[]): s
     .toString()
 }
 export function localDate(date = new Date()): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  return dateInTimeZone(date)
 }
