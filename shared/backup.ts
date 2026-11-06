@@ -1,5 +1,7 @@
 import { goalFundingSchema, fundingOf, goalFundingIssues } from './goals'
 import { categorySchema, withCategoryIds } from './categories'
+import { transactionSplitSchema, transactionDetailIssues } from './transaction-details'
+import { importRuleSchema, importMappingSchema } from './import-workflow'
 import { validTimeZone } from './time-zone'
 import { z } from 'zod'
 import { commandHistoryEntrySchema, type CommandHistoryEntry } from './command-history'
@@ -25,7 +27,7 @@ import {
 type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-export const backupVersion = 8
+export const backupVersion = 9
 export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
@@ -59,6 +61,8 @@ const transaction = z
     createdAt: timestamp,
     deletedAt: timestamp.nullable().default(null),
     importAccountId: z.uuid().nullable().default(null),
+    splits: z.array(transactionSplitSchema).max(50).default([]),
+    refundOf: z.uuid().nullable().default(null),
   })
   .superRefine((row, ctx) => {
     if (row.kind === 'transfer' && (!row.toAccountId || row.toAccountId === row.accountId))
@@ -85,9 +89,41 @@ const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
  */
 export function upgradeBackup(input: unknown): unknown {
   const upgraded = upgradeObligations(upgradePlans(input))
-  if (isRow(input) && [1, 2, 3, 4, 5, 6, 7].includes(input.version as number) && isRow(upgraded))
+  const refunds = new Map<string, string>()
+  if (isRow(upgraded))
+    for (const goal of rows(upgraded.goals))
+      if (isRow(goal) && isRow(goal.funding))
+        for (const p of rows(goal.funding.purchases))
+          if (isRow(p) && typeof p.transactionId === 'string')
+            for (const id of rows(p.refundIds))
+              if (typeof id === 'string') refunds.set(id, p.transactionId)
+  if (isRow(input) && [1, 2, 3, 4, 5, 6, 7, 8].includes(input.version as number) && isRow(upgraded))
     return withCategoryIds({
       ...upgraded,
+      transactions: rows(upgraded.transactions).map((t) =>
+        isRow(t) && refunds.has(t.id as string)
+          ? { ...t, refundOf: refunds.get(t.id as string) }
+          : t,
+      ),
+      deletedTransactions: rows(upgraded.deletedTransactions).map((t) =>
+        isRow(t) && refunds.has(t.id as string)
+          ? { ...t, refundOf: refunds.get(t.id as string) }
+          : t,
+      ),
+      importKeys:
+        upgraded.importKeys ??
+        [...rows(upgraded.transactions), ...rows(upgraded.deletedTransactions)]
+          .filter((t) => isRow(t) && t.importKey)
+          .map((t) => {
+            const row = t as Row
+            return {
+              id: crypto.randomUUID(),
+              accountId: row.importAccountId || row.accountId,
+              key: row.importKey,
+              transactionId: row.id,
+              batchId: null,
+            }
+          }),
       timeZone: upgraded.timeZone || 'Europe/Moscow',
       goals: rows(upgraded.goals).map((g) =>
         isRow(g)
@@ -95,7 +131,7 @@ export function upgradeBackup(input: unknown): unknown {
           : g,
       ),
       version: backupVersion,
-      commandHistory: [5, 6, 7].includes(input.version as number) ? upgraded.commandHistory : [],
+      commandHistory: [5, 6, 7, 8].includes(input.version as number) ? upgraded.commandHistory : [],
     })
   return upgraded
 }
@@ -219,6 +255,56 @@ const plan = planSchema.safeExtend({
 const backupObject = z
   .object({
     version: z.literal(backupVersion),
+    importRules: z
+      .array(importRuleSchema.extend({ id: z.uuid() }))
+      .max(10000)
+      .default([]),
+    importTemplates: z
+      .array(z.object({ id: z.uuid(), name: z.string().max(160), mapping: importMappingSchema }))
+      .max(1000)
+      .default([]),
+    importKeys: z
+      .array(
+        z.object({
+          id: z.uuid(),
+          accountId: z.uuid(),
+          key: z.string().max(300),
+          transactionId: z.uuid(),
+          batchId: z.uuid().nullable(),
+        }),
+      )
+      .max(100000)
+      .default([]),
+    importBatches: z
+      .array(
+        z.object({
+          id: z.uuid(),
+          createdAt: z.iso.datetime(),
+          fileName: z.string().max(200),
+          status: z.enum(['applied', 'undone']),
+          revision: z.string().regex(/^\d+$/),
+          report: z.object({
+            imported: z.number().int().nonnegative(),
+            skipped: z.number().int().nonnegative(),
+            matched: z.number().int().nonnegative(),
+            linked: z.number().int().nonnegative(),
+            ignored: z.number().int().nonnegative(),
+          }),
+          records: z
+            .array(
+              z.object({
+                id: z.uuid(),
+                accountId: z.uuid(),
+                key: z.string().max(300),
+                created: z.boolean(),
+                snapshot: z.record(z.string(), z.unknown()),
+              }),
+            )
+            .max(2000),
+        }),
+      )
+      .max(10000)
+      .default([]),
     categories: z.array(categorySchema).max(10000),
     timeZone: z.string().refine(validTimeZone),
     exportedAt: z.iso.datetime(),
@@ -247,6 +333,35 @@ const backupObject = z
     commandHistory: z.array(commandHistoryEntrySchema).max(100000),
   })
   .superRefine((backup, ctx) => {
+    for (const message of transactionDetailIssues(backup))
+      ctx.addIssue({ code: 'custom', message, path: ['transactions'] })
+    const aliasKeys = new Set<string>(),
+      allTx = [...backup.transactions, ...backup.deletedTransactions]
+    for (const key of backup.importKeys) {
+      const compound = key.accountId + ':' + key.key
+      if (
+        aliasKeys.has(compound) ||
+        !backup.accounts.some((a) => a.id === key.accountId) ||
+        !allTx.some((t) => t.id === key.transactionId) ||
+        (key.batchId && !backup.importBatches.some((b) => b.id === key.batchId))
+      )
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Нарушены связи ключей импорта',
+          path: ['importKeys'],
+        })
+      aliasKeys.add(compound)
+    }
+    for (const rule of backup.importRules)
+      if (
+        !backup.categories.some((c) => c.id === rule.categoryId) ||
+        (rule.accountId && !backup.accounts.some((a) => a.id === rule.accountId))
+      )
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Нарушены связи правила импорта',
+          path: ['importRules'],
+        })
     for (const message of goalFundingIssues(backup, true))
       ctx.addIssue({ code: 'custom', message, path: ['goals'] })
     for (const key of [
@@ -262,6 +377,10 @@ const backupObject = z
       'planVersions',
       'planOccurrences',
       'commandHistory',
+      'importRules',
+      'importTemplates',
+      'importKeys',
+      'importBatches',
     ] as const) {
       const ids = new Set<string>()
       for (const row of backup[key]) {

@@ -5,6 +5,7 @@ import { commandHistory, workspaceGuard } from '../db/schema'
 import type { Command } from './workspace'
 import type { CommandResult } from '../../shared/planning-types'
 import type { CommandHistoryPage } from '../../shared/command-history'
+import { syncTransactionDetails } from './transaction-details'
 import { syncGoals } from './goals'
 import { syncCreditCards } from './credit'
 
@@ -14,6 +15,7 @@ export async function finishCommand(
   result: CommandResult,
   revisionBefore: string,
 ) {
+  await syncTransactionDetails(db)
   await syncCreditCards(db, revisionBefore)
   await syncGoals(db, revisionBefore)
   let base = BigInt(revisionBefore)

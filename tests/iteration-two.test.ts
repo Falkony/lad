@@ -143,7 +143,7 @@ describe('account lifecycle and ledger editing', () => {
     const old = (await readWorkspace()).transactions[0]!
     await run({ op: 'transaction.update', id: old.id, data: { ...old, accountId: b } })
     await run({ op: 'transaction.delete', id: old.id })
-    expect(await run({ op: 'import', data: { transactions: [row] } })).toEqual({
+    expect(await run({ op: 'import', data: { transactions: [row] } })).toMatchObject({
       imported: 0,
       skipped: 1,
     })
@@ -156,7 +156,7 @@ describe('account lifecycle and ledger editing', () => {
       expectedRevision: (await readWorkspace()).revision,
       confirmation: 'ВОССТАНОВИТЬ',
     })
-    expect(await run({ op: 'import', data: { transactions: [row] } })).toEqual({
+    expect(await run({ op: 'import', data: { transactions: [row] } })).toMatchObject({
       imported: 0,
       skipped: 1,
     })

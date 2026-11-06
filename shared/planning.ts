@@ -1,5 +1,6 @@
 import type { Workspace, Transaction } from './types'
 import { previousWorkingDay } from './workdays'
+import { categoryAmounts } from './transaction-details'
 import type { PlanVersion, ProjectedOccurrence, PlanDirection } from './planning-types'
 
 const dayMs = 86400000
@@ -78,7 +79,7 @@ export function recurringDates(version: PlanVersion, from: string, to: string): 
 export type PlanningWorkspace = Pick<
   Workspace,
   'plans' | 'planVersions' | 'planOccurrences' | 'transactions' | 'deletedTransactions'
->
+> & { referenceTransactions?: Transaction[] }
 // The longest stretch of days off (New Year holidays) a pay day can move back over.
 const shiftWindow = 16
 type Selection = { from: string; to: string } | { planId: string; dueDate: string }
@@ -124,7 +125,11 @@ function project(workspace: PlanningWorkspace, selection: Selection): ProjectedO
     }
   }
   const transactions = new Map(
-    [...workspace.transactions, ...workspace.deletedTransactions].map((t) => [t.id, t]),
+    [
+      ...workspace.transactions,
+      ...workspace.deletedTransactions,
+      ...(workspace.referenceTransactions || []),
+    ].map((t) => [t.id, t]),
   )
   for (const occurrence of workspace.planOccurrences) {
     const plan = plans.get(occurrence.planId)
@@ -181,8 +186,12 @@ export function overduePlans(workspace: PlanningWorkspace, today: string, days =
 export function categorySpending(transactions: Transaction[], month: string) {
   const totals = new Map<string, bigint>()
   for (const t of transactions)
-    if (!t.deletedAt && t.kind === 'expense' && t.date.startsWith(month + '-'))
-      totals.set(t.category, (totals.get(t.category) || 0n) + BigInt(t.amount))
+    if (!t.deletedAt && t.date.startsWith(month + '-'))
+      for (const part of categoryAmounts(t))
+        totals.set(
+          part.category || t.category,
+          (totals.get(part.category || t.category) || 0n) + part.amount,
+        )
   return totals
 }
 function openTotal(items: ProjectedOccurrence[], direction: PlanDirection) {
@@ -196,8 +205,18 @@ export function monthPlan(workspace: PlanningWorkspace, month: string) {
   const items = projectPlans(workspace, range.from, range.to)
   const actual = (kind: 'income' | 'expense') =>
     workspace.transactions
-      .filter((t) => !t.deletedAt && t.kind === kind && t.date.startsWith(month + '-'))
-      .reduce((sum, t) => sum + BigInt(t.amount), 0n)
+      .filter(
+        (t) =>
+          !t.deletedAt &&
+          t.date.startsWith(month + '-') &&
+          (kind === 'income'
+            ? t.kind === 'income' && !t.refundOf
+            : t.kind === 'expense' || (t.kind === 'income' && !!t.refundOf)),
+      )
+      .reduce(
+        (sum, t) => sum + BigInt(t.amount) * (kind === 'expense' && t.refundOf ? -1n : 1n),
+        0n,
+      )
   const received = actual('income'),
     expectedIncome = openTotal(items, 'income'),
     spent = actual('expense'),

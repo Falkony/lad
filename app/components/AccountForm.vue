@@ -31,7 +31,10 @@ watch(
     Object.assign(
       form,
       account
-        ? { ...account, openingBalance: toMajor(account.openingBalance) }
+        ? {
+            ...account,
+            openingBalance: toMajor(account.originalOpeningBalance || account.openingBalance),
+          }
         : {
             name: '',
             kind: 'card',

@@ -1,4 +1,6 @@
 import { configureTimeZone } from '../../shared/time-zone'
+import { addDays } from '../../shared/planning'
+import { localDate } from '../../shared/money'
 import type { Workspace } from '../../shared/types'
 import type { CommandResult } from '../../shared/planning-types'
 const empty = (): Workspace => ({
@@ -18,12 +20,14 @@ const empty = (): Workspace => ({
   planOccurrences: [],
 })
 const guardedOps = new Set([
+  'import.rule.save',
   'account.update',
   'transaction.update',
   'goal.update',
   'obligation.update',
 ])
 export function useWorkspace() {
+  const periodFrom = useState('workspace-period-from', () => addDays(localDate(), -100))
   const workspace = useState<Workspace>('workspace', empty)
   const loading = useState('workspace-loading', () => true)
   const pending = useState('workspace-pending', () => false)
@@ -34,7 +38,7 @@ export function useWorkspace() {
     const version = ++refreshVersion.value
     loading.value = true
     try {
-      const value = await $fetch<Workspace>('/api/workspace')
+      const value = await $fetch<Workspace>('/api/workspace', { query: { from: periodFrom.value } })
       if (version === refreshVersion.value) {
         workspace.value = value
         configureTimeZone(value.timeZone || 'Europe/Moscow')
@@ -88,5 +92,12 @@ export function useWorkspace() {
       if (toast.value === message) toast.value = ''
     }, 4500)
   }
-  return { workspace, loading, pending, error, toast, refresh, command, notify }
+  async function setPeriod(month: string) {
+    const from = [addDays(localDate(), -100), addDays(`${month}-01`, -16)].sort()[0]!
+    if (periodFrom.value !== from) {
+      periodFrom.value = from
+      await refresh()
+    }
+  }
+  return { workspace, loading, pending, error, toast, refresh, command, notify, setPeriod }
 }

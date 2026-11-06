@@ -1,4 +1,4 @@
-import { and, eq, desc, sql, or, inArray, isNull, isNotNull } from 'drizzle-orm'
+import { and, eq, desc, sql, or, inArray, isNull, isNotNull, gte, lt } from 'drizzle-orm'
 import { createError } from 'h3'
 import { z } from 'zod'
 import { getDb, type WriteTransaction } from '../db'
@@ -18,6 +18,10 @@ import {
   plans,
   planVersions,
   planOccurrences,
+  importBatches,
+  importKeys,
+  importRules,
+  importTemplates,
 } from '../db/schema'
 import {
   accountSchema,
@@ -57,6 +61,13 @@ import {
 } from './categories'
 import { configureTimeZone } from '../../shared/time-zone'
 import { goalCommands, isGoalCommand, executeGoalCommand, afterGoalConfirm } from './goals'
+import {
+  importCommands,
+  isImportWorkflowCommand,
+  executeImportWorkflow,
+  applyStatement,
+} from './import-workflow'
+import { detailCommands, isDetailCommand, executeDetailCommand } from './transaction-details'
 import { finishCommand } from './command-history'
 import type { CommandHistoryEntry } from '../../shared/command-history'
 
@@ -77,6 +88,7 @@ export function found<T>(rows: T[], message: string): T[] {
 
 export async function readWorkspace(
   includeHistory = false,
+  from?: string,
 ): Promise<Workspace & { commandHistory?: CommandHistoryEntry[] }> {
   const client = await getDb()
   return client.transaction(
@@ -86,6 +98,7 @@ export async function readWorkspace(
         db
           .select()
           .from(transactions)
+          .where(from ? gte(transactions.date, from) : undefined)
           .orderBy(desc(transactions.date), desc(transactions.createdAt)),
         db.select().from(goals),
         db.select().from(events),
@@ -103,8 +116,84 @@ export async function readWorkspace(
         db.select().from(planOccurrences),
         db.select().from(categoryCatalogue).orderBy(categoryCatalogue.name),
       ])
+      const batchRows = await db
+        .select({
+          id: importBatches.id,
+          createdAt: importBatches.createdAt,
+          fileName: importBatches.fileName,
+          status: importBatches.status,
+          revision: importBatches.revision,
+          report: importBatches.report,
+          records: from
+            ? sql<import('../../shared/import-workflow').ImportBatch['records']>`'[]'::jsonb`
+            : importBatches.records,
+        })
+        .from(importBatches)
+        .orderBy(desc(importBatches.createdAt))
+        .limit(from ? 30 : 100000)
+      const ruleRows = await db.select().from(importRules),
+        templateRows = await db.select().from(importTemplates),
+        keyRows = from ? [] : await db.select().from(importKeys)
+      let clientProjection = {}
+      if (from) {
+        const old = and(lt(transactions.date, from), isNull(transactions.deletedAt))
+        const outgoing = await db
+          .select({
+            id: transactions.accountId,
+            delta: sql<string>`coalesce(sum(case when ${transactions.kind} in ('income','adjustment') then ${transactions.amount} else -${transactions.amount} end),0)::text`,
+          })
+          .from(transactions)
+          .where(old)
+          .groupBy(transactions.accountId)
+        const incoming = await db
+          .select({
+            id: transactions.toAccountId,
+            delta: sql<string>`sum(${transactions.amount})::text`,
+          })
+          .from(transactions)
+          .where(and(old, eq(transactions.kind, 'transfer')))
+          .groupBy(transactions.toAccountId)
+        for (const account of a) {
+          const original = account.openingBalance
+          account.openingBalance = (
+            BigInt(original) +
+            BigInt(outgoing.find((x) => x.id === account.id)?.delta || '0') +
+            BigInt(incoming.find((x) => x.id === account.id)?.delta || '0')
+          ).toString()
+          Object.assign(account, { originalOpeningBalance: original })
+        }
+        const refs = [
+          ...new Set(
+            p
+              .filter((o) => o.dueDate >= from || (!!o.movedTo && o.movedTo >= from))
+              .map((o) => o.transactionId)
+              .filter((id): id is string => !!id),
+          ),
+        ]
+        const referenceTransactions = refs.length
+          ? await db
+              .select()
+              .from(transactions)
+              .where(and(inArray(transactions.id, refs), lt(transactions.date, from)))
+          : []
+        const active = await db
+          .select({ id: transactions.id })
+          .from(transactions)
+          .innerJoin(obligationEntries, eq(obligationEntries.transactionId, transactions.id))
+          .where(isNull(transactions.deletedAt))
+        clientProjection = {
+          transactionRange: { from, to: localDate() },
+          referenceTransactions,
+          activeTransactionIds: active.map((t) => t.id),
+        }
+      }
       return {
+        importBatches: batchRows,
+        importRules: ruleRows,
+        importTemplates: templateRows,
+        importKeys: keyRows,
         accounts: a,
+        ...clientProjection,
         categories: catalogue,
         timeZone: meta.find((item) => item.key === 'time_zone')?.value || 'Europe/Moscow',
         transactions: t.filter((t) => !t.deletedAt),
@@ -139,6 +228,8 @@ export const commandSchema = z.discriminatedUnion('op', [
   ...obligationCommands,
   ...categoryCommands,
   ...goalCommands,
+  ...importCommands,
+  ...detailCommands,
   z.object({ op: z.literal('account.create'), data: accountSchema }),
   z.object({
     op: z.literal('account.update'),
@@ -196,7 +287,7 @@ export const commandSchema = z.discriminatedUnion('op', [
       date: pastDate('Дата покупки не может быть в будущем'),
     }),
   }),
-  z.object({ op: z.literal('import'), data: importSchema }),
+  z.object({ op: z.literal('import'), data: importSchema, expectedRevision: revision.optional() }),
   z.object({ op: z.literal('demo.load') }),
   z.object({ op: z.literal('workspace.reset'), confirmation: z.literal('УДАЛИТЬ') }),
 ])
@@ -259,7 +350,9 @@ async function executeWorkspaceCommand(command: Command) {
           throw createError({
             statusCode: 400,
             message:
-              'Этот график ведётся связанной карточкой. Измените обязательство, карту или цель.',
+              plan?.source === 'obligation'
+                ? 'Этот график ведётся в разделе «Кредиты и долги». Измените обязательство.'
+                : 'Этот график ведётся связанной карточкой. Измените карту или цель.',
           })
       }
       const result = await executePlanningCommand(db, command, revisionBefore)
@@ -284,6 +377,10 @@ async function executeWorkspaceCommand(command: Command) {
     let result: CommandResult = { ok: true }
     if (isCategoryCommand(command))
       return finishCommand(db, command, await executeCategoryCommand(db, command), revisionBefore)
+    if (isImportWorkflowCommand(command))
+      return finishCommand(db, command, await executeImportWorkflow(db, command), revisionBefore)
+    if (isDetailCommand(command))
+      return finishCommand(db, command, await executeDetailCommand(db, command), revisionBefore)
     if (isGoalCommand(command))
       return finishCommand(db, command, await executeGoalCommand(db, command), revisionBefore)
     if (isObligationCommand(command)) {
@@ -475,9 +572,14 @@ async function executeWorkspaceCommand(command: Command) {
           rows.some((t) => t.deletedAt || !['expense', 'income'].includes(t.kind))
         )
           throw createError({ statusCode: 400, message: 'Выберите действующие расходы или доходы' })
+        if (rows.some((t) => t.refundOf))
+          throw createError({
+            statusCode: 400,
+            message: 'Категории возврата следуют исходной покупке',
+          })
         await db
           .update(transactions)
-          .set({ category: command.category })
+          .set({ category: command.category, splits: [] })
           .where(inArray(transactions.id, ids))
         break
       }
@@ -548,32 +650,7 @@ async function executeWorkspaceCommand(command: Command) {
         break
       }
       case 'import': {
-        let imported = 0
-        await db.transaction(async (tx) => {
-          const known = (await tx.select().from(accounts)).filter((a) => !a.archived)
-          for (const row of command.data.transactions) {
-            if (
-              !known.some((a) => a.id === row.accountId) ||
-              (row.kind === 'transfer' && !known.some((a) => a.id === row.toAccountId))
-            )
-              throw createError({ statusCode: 400, message: 'Счёт не найден' })
-            // Keep equal-looking rows: the importer includes the occurrence number in its key.
-            if (!row.importKey)
-              throw createError({ statusCode: 400, message: 'Не указан ключ операции импорта' })
-            const inserted = await tx
-              .insert(transactions)
-              .values({
-                id: crypto.randomUUID(),
-                ...row,
-                importAccountId: row.accountId,
-                toAccountId: row.kind === 'transfer' ? row.toAccountId : null,
-              })
-              .onConflictDoNothing()
-              .returning()
-            imported += inserted.length
-          }
-        })
-        result = { imported, skipped: command.data.transactions.length - imported }
+        result = await applyStatement(db, command.data, revisionBefore)
         break
       }
       case 'workspace.restore': {
@@ -583,6 +660,10 @@ async function executeWorkspaceCommand(command: Command) {
             message: 'Пространство изменилось после предпросмотра. Загрузите копию заново.',
           })
         const backup = command.backup
+        await db.delete(importKeys)
+        await db.delete(importBatches)
+        await db.delete(importRules)
+        await db.delete(importTemplates)
         await db.delete(commandHistory)
         await db.delete(obligationEntries)
         await db.delete(obligations)
@@ -606,7 +687,19 @@ async function executeWorkspaceCommand(command: Command) {
         await db.insert(settings).values({ key: 'time_zone', value: backup.timeZone })
         for (const rows of chunks(backup.accounts)) await db.insert(accounts).values(rows)
         for (const rows of chunks([...backup.transactions, ...backup.deletedTransactions]))
-          await db.insert(transactions).values(rows)
+          await db.insert(transactions).values(rows.map((t) => ({ ...t, refundOf: null })))
+        for (const t of [...backup.transactions, ...backup.deletedTransactions].filter(
+          (t) => t.refundOf,
+        ))
+          await db
+            .update(transactions)
+            .set({ refundOf: t.refundOf })
+            .where(eq(transactions.id, t.id))
+        for (const rows of chunks(backup.importBatches)) await db.insert(importBatches).values(rows)
+        for (const rows of chunks(backup.importKeys)) await db.insert(importKeys).values(rows)
+        for (const rows of chunks(backup.importRules)) await db.insert(importRules).values(rows)
+        for (const rows of chunks(backup.importTemplates))
+          await db.insert(importTemplates).values(rows)
         for (const rows of chunks(backup.goals)) await db.insert(goals).values(rows)
         for (const rows of chunks(backup.events)) await db.insert(events).values(rows)
         for (const rows of chunks(backup.shopping)) await db.insert(shopping).values(rows)
@@ -625,6 +718,10 @@ async function executeWorkspaceCommand(command: Command) {
       }
       case 'workspace.reset': {
         await db.transaction(async (tx) => {
+          await tx.delete(importKeys)
+          await tx.delete(importBatches)
+          await tx.delete(importRules)
+          await tx.delete(importTemplates)
           await tx.delete(commandHistory)
           await tx.delete(obligationEntries)
           await tx.delete(obligations)

@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { localDate } from './money'
 import { creditSettingsSchema } from './credit'
+import { transactionSplitSchema } from './transaction-details'
+import { importDecisionSchema } from './import-workflow'
 z.config(z.locales.ru())
 export const amount = z
   .string()
@@ -47,6 +49,8 @@ export const transactionSchema = z
     description: z.string().trim().max(300).default(''),
     date: pastDate(),
     importKey: z.string().max(300).nullable().default(null),
+    splits: z.array(transactionSplitSchema).max(50).optional(),
+    refundOf: z.uuid().nullable().optional(),
   })
   .refine((v) => v.kind !== 'transfer' || (v.toAccountId && v.toAccountId !== v.accountId), {
     message: 'Выберите другой счёт для перевода',
@@ -113,4 +117,8 @@ export const obligationSchema = z.object({
     .regex(/^\d{1,3}(\.\d{1,3})?$/)
     .default('0'),
 })
-export const importSchema = z.object({ transactions: z.array(transactionSchema).min(1).max(2000) })
+export const importSchema = z.object({
+  transactions: z.array(transactionSchema).min(1).max(2000),
+  fileName: z.string().max(200).default(''),
+  decisions: z.array(importDecisionSchema).max(2000).default([]),
+})

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { accountBalance, money, sumAmounts, localDate } from '../../shared/money'
+import { monthPlan } from '../../shared/planning'
 import { projectPlans, overduePlans, isOpen, addDays } from '../../shared/planning'
 import type { ProjectedOccurrence } from '../../shared/planning-types'
 import { forecast, untilNextIncome } from '../../shared/forecast'
@@ -9,6 +10,7 @@ const operationOpen = ref(false)
 const current = new Date(),
   month = ref(new Date(current.getFullYear(), current.getMonth(), 1))
 const monthKey = computed(() => localDate(month.value).slice(0, 7))
+useWorkspacePeriod(monthKey)
 const monthLabel = computed(() =>
   new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' })
     .format(month.value)
@@ -17,12 +19,8 @@ const monthLabel = computed(() =>
 const monthTransactions = computed(() =>
   w.value.transactions.filter((t) => t.date.startsWith(monthKey.value)),
 )
-const income = computed(() =>
-  sumAmounts(monthTransactions.value.filter((t) => t.kind === 'income').map((t) => t.amount)),
-)
-const expenses = computed(() =>
-  sumAmounts(monthTransactions.value.filter((t) => t.kind === 'expense').map((t) => t.amount)),
-)
+const income = computed(() => monthPlan(w.value, monthKey.value).received)
+const expenses = computed(() => monthPlan(w.value, monthKey.value).spent)
 const balance = computed(() =>
   sumAmounts(w.value.accounts.map((a) => accountBalance(a, w.value.transactions))),
 )

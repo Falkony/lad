@@ -12,6 +12,8 @@ export const categories = [
 ] as const
 export type TransactionKind = 'expense' | 'income' | 'transfer' | 'adjustment'
 export interface Account {
+  /** Client period projection only: editable opening value remains the original. */
+  originalOpeningBalance?: string
   creditSettings?: import('./credit').CreditSettings
   id: string
   name: string
@@ -25,6 +27,9 @@ export interface Account {
   inForecast: boolean
 }
 export interface Transaction {
+  categoryId?: string
+  splits?: import('./transaction-details').TransactionSplit[]
+  refundOf?: string | null
   id: string
   kind: TransactionKind
   amount: string
@@ -106,6 +111,13 @@ export interface ObligationEntry {
   createdAt: string
 }
 export interface Workspace {
+  importBatches?: import('./import-workflow').ImportBatch[]
+  importRules?: import('./import-workflow').ImportRule[]
+  importTemplates?: import('./import-workflow').ImportTemplate[]
+  importKeys?: import('./import-workflow').ImportKey[]
+  transactionRange?: { from: string; to: string }
+  referenceTransactions?: Transaction[]
+  activeTransactionIds?: string[]
   categories?: import('./categories').Category[]
   timeZone?: string
   budgets: import('./planning-types').Budget[]

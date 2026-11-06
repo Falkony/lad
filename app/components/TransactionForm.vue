@@ -6,6 +6,21 @@ const props = defineProps<{ transaction?: Transaction | null }>()
 const emit = defineEmits<{ saved: [] }>()
 const { workspace, command, pending } = useWorkspace()
 const kind = ref<'expense' | 'income' | 'transfer'>('expense')
+const splits = ref<{ categoryId: string; amount: string }[]>([]),
+  refundOf = ref(''),
+  purchaseSearch = ref('')
+const { data: purchases } = await useFetch('/api/transactions', {
+  query: computed(() => ({ kind: 'expense', limit: 30, search: purchaseSearch.value })),
+  default: () => ({
+    rows: [],
+    count: 0,
+    income: '0',
+    expense: '0',
+    page: 1,
+    limit: 30,
+    revision: '0',
+  }),
+})
 const amount = ref(''),
   description = ref(''),
   category = ref('Продукты'),
@@ -24,6 +39,11 @@ watch(
     accountId.value = t?.accountId || workspace.value.accounts.find((a) => !a.archived)?.id || ''
     toAccountId.value = t?.toAccountId || ''
     error.value = ''
+    splits.value = (t?.splits || []).map((p) => ({
+      categoryId: p.categoryId,
+      amount: toMajor(p.amount),
+    }))
+    refundOf.value = t?.refundOf || ''
   },
   { immediate: true },
 )
@@ -57,6 +77,11 @@ async function submit() {
           category: kind.value === 'transfer' ? 'Перевод' : category.value,
           description: description.value,
           date: date.value,
+          splits:
+            kind.value === 'expense'
+              ? splits.value.map((p) => ({ ...p, amount: toMinor(p.amount) }))
+              : [],
+          refundOf: kind.value === 'income' ? refundOf.value || null : null,
         },
       },
       props.transaction ? 'Операция обновлена' : 'Операция добавлена',
@@ -84,6 +109,56 @@ async function submit() {
         {{ item.label }}
       </button>
     </div>
+    <details v-if="kind === 'expense'" class="form-stack">
+      <summary>Разделить расход по категориям</summary>
+      <div v-for="(part, index) in splits" :key="index" class="form-row">
+        <label
+          >Категория<select v-model="part.categoryId" required>
+            <option value="" disabled>Выберите</option>
+            <option
+              v-for="c in (workspace.categories || []).filter(
+                (c) => !c.archived || c.id === part.categoryId,
+              )"
+              :key="c.id"
+              :value="c.id"
+            >
+              {{ c.name }}
+            </option>
+          </select></label
+        ><label>Сумма, ₽<input v-model="part.amount" inputmode="decimal" required /></label
+        ><button type="button" class="button ghost" @click="splits.splice(index, 1)">Убрать</button>
+      </div>
+      <button
+        type="button"
+        class="button secondary"
+        @click="splits.push({ categoryId: '', amount: '' })"
+      >
+        Добавить категорию
+      </button>
+      <p class="form-hint">Сумма частей должна равняться сумме операции.</p>
+    </details>
+    <details v-if="kind === 'income'" class="form-stack">
+      <summary>Это возврат покупки</summary>
+      <label>Поиск покупки<input v-model="purchaseSearch" placeholder="Описание покупки" /></label
+      ><label
+        >Исходный расход<select v-model="refundOf">
+          <option value="">Обычный доход</option>
+          <option
+            v-if="refundOf && !purchases.rows.some((t) => t.id === refundOf)"
+            :value="refundOf"
+          >
+            Ранее выбранная покупка
+          </option>
+          <option v-for="t in purchases.rows" :key="t.id" :value="t.id">
+            {{ t.date }} · {{ t.description || t.category }} · {{ toMajor(t.amount) }} ₽
+          </option>
+        </select></label
+      >
+      <p class="form-hint">
+        Возврат уменьшит расходы в месяце возврата и не увеличит доходы. Разделение по категориям
+        определяется исходной покупкой.
+      </p>
+    </details>
     <label
       >Сумма, ₽<input
         v-model="amount"

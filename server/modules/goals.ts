@@ -199,6 +199,7 @@ export async function executeGoalCommand(db: WriteTransaction, c: GoalCommand) {
       await db.insert(transactions).values({
         id: transactionId,
         kind,
+        refundOf: c.op === 'goal.refund' ? funding.purchases.at(-1)?.transactionId : null,
         amount: c.amount,
         accountId: a.id,
         category: category || 'Покупки',
@@ -212,6 +213,13 @@ export async function executeGoalCommand(db: WriteTransaction, c: GoalCommand) {
       if (!last) throw fail('Сначала свяжите покупку с целью')
       const original = history.find((t) => t.id === last.transactionId && !t.deletedAt)
       if (!original) throw fail('Исходная покупка удалена')
+      const linked = history.find((t) => t.id === transactionId)
+      if (linked?.refundOf && linked.refundOf !== original.id)
+        throw fail('Возврат уже связан с другой покупкой')
+      await db
+        .update(transactions)
+        .set({ refundOf: original.id })
+        .where(eq(transactions.id, transactionId!))
       const refunded = history
         .filter((t) => last.refundIds.includes(t.id) && !t.deletedAt)
         .reduce((s, t) => s + BigInt(t.amount), 0n)

@@ -11,6 +11,7 @@ import {
   planOccurrences,
   settings,
   goals,
+  importRules,
 } from '../db/schema'
 import { revision } from '../../shared/schemas'
 import { validTimeZone } from '../../shared/time-zone'
@@ -93,6 +94,27 @@ export async function executeCategoryCommand(db: WriteTransaction, command: Cate
     await db.update(budgets).set({ category: target.name }).where(eq(budgets.categoryId, source.id))
   else {
     await db.update(goals).set({ categoryId: target.id }).where(eq(goals.categoryId, source.id))
+    await db
+      .update(importRules)
+      .set({ categoryId: target.id })
+      .where(eq(importRules.categoryId, source.id))
+    for (const t of await db.select().from(transactions))
+      if (t.splits.some((p) => p.categoryId === source.id)) {
+        const combined = new Map<string, { categoryId: string; category: string; amount: string }>()
+        for (const p of t.splits) {
+          const id = p.categoryId === source.id ? target.id : p.categoryId,
+            old = combined.get(id)
+          combined.set(id, {
+            categoryId: id,
+            category: id === target.id ? target.name : p.category || '',
+            amount: (BigInt(p.amount) + BigInt(old?.amount || '0')).toString(),
+          })
+        }
+        await db
+          .update(transactions)
+          .set({ splits: [...combined.values()] })
+          .where(eq(transactions.id, t.id))
+      }
     await db.delete(categories).where(eq(categories.id, source.id))
   }
   return { ok: true }
@@ -102,6 +124,23 @@ export async function checkCategoryInput(
   db: WriteTransaction,
   command: { op: string; [key: string]: any },
 ) {
+  if (['transaction.create', 'transaction.update', 'transaction.details'].includes(command.op)) {
+    const splits = command.op === 'transaction.details' ? command.splits : command.data?.splits
+    const [previous] = command.id
+      ? await db.select().from(transactions).where(eq(transactions.id, command.id))
+      : []
+    for (const split of splits || []) {
+      const [category] = await db
+        .select()
+        .from(categories)
+        .where(eq(categories.id, split.categoryId))
+      if (
+        !category ||
+        (category.archived && !previous?.splits.some((p) => p.categoryId === split.categoryId))
+      )
+        throw createError({ statusCode: 400, message: 'Выберите действующую категорию разделения' })
+    }
+  }
   const values: string[] =
     command.op === 'import'
       ? command.data.transactions.map((row: any) => row.category)

@@ -10,6 +10,7 @@ const month = ref(localDate().slice(0, 7)),
   editing = ref<Budget | null>(null),
   removing = ref<Budget | null>(null),
   error = ref('')
+useWorkspacePeriod(month)
 const form = reactive({ category: 'Продукты', limit: '' })
 const route = useRoute()
 watch(

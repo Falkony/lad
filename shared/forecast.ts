@@ -288,7 +288,8 @@ export function forecastFlows(
       if (inside && !target) transfersOut += amount
       if (!inside && target) transfersIn += amount
     } else if (inside) {
-      if (t.kind === 'income') incomes += amount
+      if (t.kind === 'income' && t.refundOf) expenses -= amount
+      else if (t.kind === 'income') incomes += amount
       else if (t.kind === 'expense') expenses += amount
       else adjustments += amount
     }

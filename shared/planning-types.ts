@@ -71,6 +71,10 @@ export interface ProjectedOccurrence extends Omit<PlanOccurrence, 'status'> {
   actualDate: string | null
 }
 export interface CommandResult {
+  batchId?: string
+  matched?: number
+  linked?: number
+  ignored?: number
   ok?: boolean
   imported?: number
   skipped?: number

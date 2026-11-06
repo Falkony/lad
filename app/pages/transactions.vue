@@ -15,22 +15,37 @@ const operationOpen = ref(false),
   accountId = ref('all'),
   month = ref(localDate().slice(0, 7)),
   page = ref(1)
-const filtered = computed(() =>
-  (view.value === 'deleted' ? w.value.deletedTransactions : w.value.transactions).filter(
-    (t) =>
-      (!month.value || t.date.startsWith(month.value)) &&
-      (!linkedTransaction.value || t.id === linkedTransaction.value) &&
-      (kind.value === 'all' || t.kind === kind.value) &&
-      (category.value === 'all' || t.category === category.value) &&
-      (accountId.value === 'all' ||
-        t.accountId === accountId.value ||
-        t.toAccountId === accountId.value) &&
-      `${t.description} ${t.category}`
-        .toLocaleLowerCase('ru')
-        .includes(search.value.toLocaleLowerCase('ru')),
-  ),
-)
-const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / 20)))
+useWorkspacePeriod(month)
+const query = computed(() => ({
+  page: page.value,
+  month: month.value || undefined,
+  kind: kind.value === 'all' ? undefined : kind.value,
+  category: category.value === 'all' ? undefined : category.value,
+  accountId: accountId.value === 'all' ? undefined : accountId.value,
+  transactionId: linkedTransaction.value || undefined,
+  search: search.value,
+  deleted: view.value === 'deleted' ? 'true' : 'false',
+  revision: w.value.revision,
+}))
+const {
+  data: result,
+  status: pageStatus,
+  error: pageError,
+} = await useFetch('/api/transactions', {
+  query,
+  default: () => ({
+    rows: [],
+    count: 0,
+    income: '0',
+    expense: '0',
+    page: 1,
+    limit: 20,
+    revision: '0',
+  }),
+})
+const filtered = computed(() => ({ length: result.value.count })),
+  visible = computed(() => result.value.rows)
+const pageCount = computed(() => Math.max(1, Math.ceil(result.value.count / 20)))
 watch([search, kind, category, accountId, month, view], () => {
   page.value = 1
   selected.value = []
@@ -48,9 +63,9 @@ watch(
   },
   { immediate: true },
 )
-const visible = computed(() => filtered.value.slice((page.value - 1) * 20, page.value * 20))
+
 watch(
-  () => route.query.transaction,
+  () => route.query.transaction || route.query.transactionId,
   (value) => {
     linkedTransaction.value = typeof value === 'string' ? value : ''
     if (linkedTransaction.value) {
@@ -95,15 +110,12 @@ async function categorize() {
 watch(pageCount, (value) => {
   page.value = Math.min(page.value, value)
 })
-const income = computed(() =>
-  sumAmounts(filtered.value.filter((t) => t.kind === 'income').map((t) => t.amount)),
-)
-const expense = computed(() =>
-  sumAmounts(filtered.value.filter((t) => t.kind === 'expense').map((t) => t.amount)),
-)
+const income = computed(() => result.value.income),
+  expense = computed(() => result.value.expense)
 const availableCategories = computed(() => [
   ...new Set([
     ...categories.value,
+    ...(w.value.categories || []).map((c) => c.name),
     ...w.value.transactions.map((t) => t.category),
     ...w.value.deletedTransactions.map((t) => t.category),
   ]),
@@ -125,11 +137,8 @@ const availableCategories = computed(() => [
     </div>
   </div>
   <div class="account-tabs">
-    <button :class="{ selected: view === 'active' }" @click="view = 'active'">
-      Операции · {{ w.transactions.length }}</button
-    ><button :class="{ selected: view === 'deleted' }" @click="view = 'deleted'">
-      Удалённые · {{ w.deletedTransactions.length }}
-    </button>
+    <button :class="{ selected: view === 'active' }" @click="view = 'active'">Операции</button
+    ><button :class="{ selected: view === 'deleted' }" @click="view = 'deleted'">Удалённые</button>
   </div>
   <div v-if="view === 'active'" class="summary-strip">
     <div>
@@ -142,6 +151,10 @@ const availableCategories = computed(() => [
       <span>Всего операций</span><strong>{{ filtered.length }}</strong>
     </div>
   </div>
+  <p v-if="pageError" class="form-error" role="alert">
+    Не удалось загрузить операции. Повторите обновление.
+  </p>
+  <p v-if="pageStatus === 'pending'" role="status">Загружаем операции…</p>
   <section class="panel operations-panel">
     <div v-if="linkedTransaction" class="linked-transaction-notice">
       <span>Связанный расход из календаря</span

@@ -177,6 +177,7 @@ export function suggestSplit(remaining: bigint, rate: string, total: bigint, ear
 }
 
 export interface ObligationData {
+  activeTransactionIds?: string[]
   obligationEntries: ObligationEntry[]
   /** Active (not deleted) transactions. */
   transactions: Pick<Transaction, 'id'>[]
@@ -193,7 +194,10 @@ export const obligationPlan = (data: Pick<ObligationData, 'plans'>, id: string) 
 export function firstOpenDate(
   obligation: Pick<Obligation, 'id' | 'startDate' | 'dueDay'>,
   data: ObligationData,
-  activeTransactions = new Set(data.transactions.map((t) => t.id)),
+  activeTransactions = new Set([
+    ...data.transactions.map((t) => t.id),
+    ...(data.activeTransactionIds || []),
+  ]),
 ) {
   const plan = obligationPlan(data, obligation.id)
   const decided = new Set(
@@ -217,7 +221,10 @@ export function firstOpenDate(
 }
 /** Balance, history totals and the estimated schedule of an obligation. */
 export function obligationOutlook(obligation: Obligation, data: ObligationData) {
-  const active = new Set(data.transactions.map((t) => t.id))
+  const active = new Set([
+    ...data.transactions.map((t) => t.id),
+    ...(data.activeTransactionIds || []),
+  ])
   const state = obligationState(obligation, data.obligationEntries, active)
   const firstOpen = firstOpenDate(obligation, data, active)
   const payment = BigInt(obligation.payment)

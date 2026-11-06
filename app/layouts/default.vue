@@ -33,6 +33,7 @@ const links = [
   { to: '/', label: 'Обзор', icon: 'dashboard' },
   { to: '/accounts', label: 'Счета', icon: 'card' },
   { to: '/transactions', label: 'Операции', icon: 'wallet' },
+  { to: '/imports', label: 'Импорт и правила', icon: 'file' },
   { to: '/budgets', label: 'Бюджеты', icon: 'budget' },
   { to: '/plans', label: 'Поступления и платежи', icon: 'repeat' },
   { to: '/forecast', label: 'Прогноз', icon: 'forecast' },

@@ -33,6 +33,10 @@ const sections = [
   { key: 'planVersions', label: 'История настроек планов' },
   { key: 'planOccurrences', label: 'Отметки дат планов' },
   { key: 'commandHistory', label: 'История изменений' },
+  { key: 'importBatches', label: 'Пакеты импорта' },
+  { key: 'importKeys', label: 'Ключи сопоставления выписок' },
+  { key: 'importRules', label: 'Правила категоризации' },
+  { key: 'importTemplates', label: 'Шаблоны колонок' },
 ] as const
 async function updatePreview() {
   await refresh()

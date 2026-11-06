@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Papa from 'papaparse'
 import { previewImport, type ImportMapping, type ImportPreview } from '../../shared/import'
+import type { ImportSuggestion, ImportDecision } from '../../shared/import-workflow'
 import { money } from '../../shared/money'
 const emit = defineEmits<{ saved: [] }>()
 const { workspace, command, pending, notify } = useWorkspace()
@@ -11,6 +12,11 @@ const rows = ref<Record<string, string>[]>([]),
   accountId = ref(workspace.value.accounts.find((a) => !a.archived)?.id || ''),
   busy = ref(false)
 const preview = ref<ImportPreview | null>(null)
+const suggestions = ref<ImportSuggestion[]>([]),
+  labels = ref<Record<string, string>>({}),
+  choices = ref<Record<number, string>>({}),
+  revision = ref(''),
+  templateName = ref('')
 const mapping = reactive<ImportMapping>({
   date: '',
   amount: '',
@@ -19,15 +25,7 @@ const mapping = reactive<ImportMapping>({
   externalId: '',
   mode: 'signed',
 })
-const skipped = computed(
-  () =>
-    preview.value?.rows.filter((row) =>
-      [...workspace.value.transactions, ...workspace.value.deletedTransactions].some(
-        (t) =>
-          (t.importAccountId || t.accountId) === row.accountId && t.importKey === row.importKey,
-      ),
-    ).length || 0,
-)
+const skipped = computed(() => suggestions.value.filter((s) => s.duplicate).length)
 watch([mapping, accountId], () => {
   preview.value = null
 })
@@ -68,8 +66,22 @@ async function prepare() {
   busy.value = true
   error.value = ''
   try {
-    preview.value = await previewImport(rows.value, mapping, accountId.value)
+    const local = await previewImport(rows.value, mapping, accountId.value)
+    preview.value = local
+    choices.value = {}
+    suggestions.value = []
+    if (!local.errors.length && local.rows.length) {
+      const server = await $fetch('/api/import/preview', {
+        method: 'POST',
+        body: { transactions: local.rows, fileName: fileName.value },
+      })
+      preview.value = { ...local, rows: server.rows as ImportPreview['rows'] }
+      suggestions.value = server.suggestions
+      labels.value = server.labels
+      revision.value = server.revision
+    }
   } catch {
+    preview.value = null
     error.value = 'Не удалось подготовить импорт'
   } finally {
     busy.value = false
@@ -78,12 +90,49 @@ async function prepare() {
 async function save() {
   if (!preview.value || preview.value.errors.length) return
   try {
-    const result = await command({ op: 'import', data: { transactions: preview.value.rows } })
-    notify(`Добавлено: ${result.imported}. Пропущено совпадений: ${result.skipped}.`)
+    const decisions: ImportDecision[] = Object.entries(choices.value)
+      .filter(([, value]) => typeof value === 'string' && value)
+      .map(([index, value]) => {
+        const [action, id, dueDate] = value.split(':')
+        return {
+          index: Number(index),
+          action: action as ImportDecision['action'],
+          ...(action === 'match'
+            ? { transactionId: id }
+            : action === 'plan'
+              ? { planId: id, dueDate }
+              : action === 'transfer'
+                ? { toAccountId: id }
+                : {}),
+        }
+      })
+    const result = await command({
+      op: 'import',
+      expectedRevision: revision.value,
+      data: { transactions: preview.value.rows, fileName: fileName.value, decisions },
+    })
+    notify(
+      `Добавлено: ${result.imported}. Связано: ${result.matched || 0}. Пропущено: ${result.skipped}.`,
+    )
     emit('saved')
   } catch (e: any) {
     error.value = e.message
   }
+}
+async function saveTemplate() {
+  try {
+    await command(
+      { op: 'import.template.save', name: templateName.value, mapping: { ...mapping } },
+      'Шаблон сохранён',
+    )
+    preview.value = null
+  } catch (e: any) {
+    error.value = e.message
+  }
+}
+function applyTemplate(id: string) {
+  const template = workspace.value.importTemplates?.find((t) => t.id === id)
+  if (template) Object.assign(mapping, template.mapping)
 }
 </script>
 <template>
@@ -100,6 +149,14 @@ async function save() {
       ><span>До 5 МБ · максимум 2 000 операций</span
       ><input type="file" accept=".csv,text/csv" @change="fileChange"
     /></label>
+    <label v-if="workspace.importTemplates?.length"
+      >Шаблон колонок<select @change="applyTemplate(($event.target as HTMLSelectElement).value)">
+        <option value="">Выберите</option>
+        <option v-for="t in workspace.importTemplates" :key="t.id" :value="t.id">
+          {{ t.name }}
+        </option>
+      </select></label
+    >
     <template v-if="headers.length"
       ><label
         >Счёт<select v-model="accountId" required>
@@ -152,9 +209,9 @@ async function save() {
         </select></label
       >
       <p class="form-hint">
-        Переводы между своими счетами пока нужно внести вручную. Без банковского ID совпадения
-        определяются по дате, типу, сумме, описанию и номеру повтора; проверьте пересекающиеся
-        выписки.
+        В предпросмотре выберите совпадение, дату плана или второй счёт перевода. Без банковского ID
+        совпадения определяются по дате, типу, сумме, описанию и номеру повтора; проверьте
+        пересекающиеся выписки.
       </p>
       <button
         v-if="!preview"
@@ -170,7 +227,62 @@ async function save() {
         <strong>Предпросмотр · {{ preview.rows.length }} операций</strong
         ><button class="text-button" @click="preview = null">Изменить</button>
       </div>
-      <p class="form-hint">Из них уже загружено: {{ skipped }}</p>
+      <p class="form-hint">
+        Из них уже загружено: {{ skipped }}. Совпадения предлагаются по дате и сумме; проверьте
+        описание. Автоматического объединения нет.
+      </p>
+      <details>
+        <summary>
+          Решения по строкам · {{ suggestions.filter((s) => s.ambiguous).length }} неоднозначных
+        </summary>
+        <div v-for="suggestion in suggestions" :key="suggestion.index" class="form-stack">
+          <p>
+            {{ suggestion.index + 1 }} · {{ preview.rows[suggestion.index]?.date }} ·
+            {{ preview.rows[suggestion.index]?.description }} ·
+            {{ money(preview.rows[suggestion.index]?.amount || '0') }}
+          </p>
+          <p v-if="suggestion.duplicate">Уже загружено — будет пропущено</p>
+          <label v-else
+            >Применить как<select v-model="choices[suggestion.index]">
+              <option :value="undefined">Новую операцию</option>
+              <option value="new">Новую операцию</option>
+              <option value="ignore">Пропустить</option>
+              <option
+                v-for="id in [...suggestion.manualIds, ...suggestion.transferIds]"
+                :key="id"
+                :value="'match:' + id"
+              >
+                Связать: {{ labels[id] }}
+              </option>
+              <option
+                v-for="p in suggestion.plans"
+                :key="p.planId + ':' + p.dueDate"
+                :value="'plan:' + p.planId + ':' + p.dueDate"
+              >
+                План: {{ p.title }} · {{ p.dueDate }}
+              </option>
+              <option
+                v-for="a in workspace.accounts.filter((a) => !a.archived && a.id !== accountId)"
+                :key="a.id"
+                :value="'transfer:' + a.id"
+              >
+                Перевод между своими счетами: {{ a.name }}
+              </option>
+            </select></label
+          >
+        </div>
+      </details>
+      <div class="form-row">
+        <label>Название шаблона<input v-model="templateName" maxlength="160" /></label
+        ><button
+          type="button"
+          class="button secondary"
+          :disabled="!templateName || pending"
+          @click="saveTemplate"
+        >
+          Сохранить колонки
+        </button>
+      </div>
       <div v-for="(row, index) in preview.rows.slice(0, 5)" :key="index" class="import-preview-row">
         <span
           >{{ row.date }}<small>{{ row.description || row.category }}</small></span

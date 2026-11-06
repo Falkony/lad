@@ -23,6 +23,7 @@ const delta = computed(() => {
     return null
   }
 })
+useWorkspacePeriod(computed(() => date.value.slice(0, 7)))
 async function save() {
   error.value = ''
   try {

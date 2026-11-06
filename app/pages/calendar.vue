@@ -33,6 +33,7 @@ const calendarRange = computed(() => {
   const from = localDate(first)
   return { from, to: addDays(from, 41) }
 })
+useWorkspacePeriod(computed(() => localDate(month.value).slice(0, 7)))
 const calendarEvents = computed<CalendarEntry[]>(() => [
   ...w.value.events,
   ...projectPlans(w.value, calendarRange.value.from, calendarRange.value.to).map((p) => ({

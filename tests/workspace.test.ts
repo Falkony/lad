@@ -47,11 +47,11 @@ describe('persistent workspace', () => {
       date: localDate(),
       importKey: 'test-1',
     }
-    expect(await run({ op: 'import', data: { transactions: [row] } })).toEqual({
+    expect(await run({ op: 'import', data: { transactions: [row] } })).toMatchObject({
       imported: 1,
       skipped: 0,
     })
-    expect(await run({ op: 'import', data: { transactions: [row] } })).toEqual({
+    expect(await run({ op: 'import', data: { transactions: [row] } })).toMatchObject({
       imported: 0,
       skipped: 1,
     })

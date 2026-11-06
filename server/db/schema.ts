@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   pgTable,
   text,
   boolean,
@@ -25,6 +26,53 @@ const categoryReference = () =>
     .references(() => categories.id)
     .default(sql`NULL`)
     .notNull()
+export const importRules = pgTable('import_rules', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  pattern: text('pattern').notNull(),
+  accountId: text('account_id').references(() => accounts.id),
+  kind: text('kind'),
+  categoryId: text('category_id')
+    .notNull()
+    .references(() => categories.id),
+  priority: integer('priority').notNull().default(100),
+  enabled: boolean('enabled').notNull().default(true),
+})
+export const importTemplates = pgTable('import_templates', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  mapping: jsonb('mapping')
+    .$type<import('../../shared/import-workflow').ImportTemplate['mapping']>()
+    .notNull(),
+})
+export const importBatches = pgTable('import_batches', {
+  id: text('id').primaryKey(),
+  createdAt: text('created_at').notNull(),
+  fileName: text('file_name').notNull(),
+  status: text('status').notNull(),
+  revision: text('revision').notNull(),
+  report: jsonb('report')
+    .$type<import('../../shared/import-workflow').ImportBatch['report']>()
+    .notNull(),
+  records: jsonb('records')
+    .$type<import('../../shared/import-workflow').ImportBatch['records']>()
+    .notNull(),
+})
+export const importKeys = pgTable(
+  'import_keys',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id),
+    key: text('key').notNull(),
+    transactionId: text('transaction_id')
+      .notNull()
+      .references(() => transactions.id),
+    batchId: text('batch_id').references(() => importBatches.id),
+  },
+  (t) => [uniqueIndex('import_keys_account_id_key_key').on(t.accountId, t.key)],
+)
 export const accounts = pgTable('accounts', {
   creditSettings: jsonb('credit_settings')
     .$type<import('../../shared/credit').CreditSettings>()
@@ -50,6 +98,11 @@ export const accounts = pgTable('accounts', {
 export const transactions = pgTable(
   'transactions',
   {
+    splits: jsonb('splits')
+      .$type<import('../../shared/transaction-details').TransactionSplit[]>()
+      .notNull()
+      .default([]),
+    refundOf: text('refund_of').references((): AnyPgColumn => transactions.id),
     id: text('id').primaryKey(),
     kind: text('kind').notNull(),
     amount: money('amount'),
@@ -72,6 +125,10 @@ export const transactions = pgTable(
       t.importKey,
     ),
     index('transactions_date').on(t.date),
+    index('transactions_page').on(t.date.desc(), t.createdAt.desc(), t.id.desc()),
+    index('transactions_account_date').on(t.accountId, t.date),
+    index('transactions_target_date').on(t.toAccountId, t.date),
+    index('transactions_refund').on(t.refundOf),
   ],
 )
 export const goals = pgTable('goals', {

@@ -24,6 +24,16 @@ export interface CommandHistoryPage {
 }
 
 export const commandLabels: Record<string, string> = {
+  'goal.allocate': 'Резервирование и изъятие накоплений',
+  'goal.purchase': 'Покупка по цели',
+  'goal.refund': 'Возврат покупки по цели',
+  'goal.cancel': 'Отмена цели',
+  'transaction.details': 'Разделение расхода или связь возврата',
+  'import.rule.save': 'Сохранение правила импорта',
+  'import.rule.delete': 'Удаление правила импорта',
+  'import.template.save': 'Сохранение шаблона выписки',
+  'import.template.delete': 'Удаление шаблона выписки',
+  'import.undo': 'Отмена пакета импорта',
   'category.create': 'Создание категории',
   'category.rename': 'Переименование категории',
   'category.archive': 'Архивация категории',

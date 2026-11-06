@@ -63,7 +63,13 @@ async function remove(id: string) {
       <div class="transaction-description">
         <strong>{{ t.description || t.category }}</strong
         ><span
-          >{{ t.category }}<span class="dot-separator">·</span
+          >{{
+            t.refundOf
+              ? 'Возврат покупки'
+              : t.splits?.length
+                ? t.splits.map((p) => p.category).join(', ')
+                : t.category
+          }}<span class="dot-separator">·</span
           >{{ workspace.accounts.find((a) => a.id === t.accountId)?.name
           }}<template v-if="t.kind === 'transfer'">
             → {{ workspace.accounts.find((a) => a.id === t.toAccountId)?.name }}</template
