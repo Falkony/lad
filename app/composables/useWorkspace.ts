@@ -15,6 +15,12 @@ const empty = (): Workspace => ({
   recurringVersions: [],
   paymentOccurrences: [],
 })
+const guardedOps = new Set([
+  'account.update',
+  'transaction.update',
+  'goal.update',
+  'obligation.update',
+])
 export function useWorkspace() {
   const workspace = useState<Workspace>('workspace', empty)
   const loading = useState('workspace-loading', () => true)
@@ -48,8 +54,14 @@ export function useWorkspace() {
   async function command(payload: Record<string, unknown>, message = '') {
     if (pending.value) throw new Error('Дождитесь завершения операции')
     pending.value = true
+    // Full-object edits carry the revision the form was based on, so the server can reject
+    // them when another tab changed the data in the meantime instead of overwriting it.
+    const body =
+      guardedOps.has(String(payload.op)) && payload.expectedRevision === undefined
+        ? { ...payload, expectedRevision: workspace.value.revision }
+        : payload
     try {
-      const result = await $fetch<CommandResult>('/api/command', { method: 'POST', body: payload })
+      const result = await $fetch<CommandResult>('/api/command', { method: 'POST', body })
       await refresh()
       if (message) notify(message)
       return result
@@ -58,6 +70,9 @@ export function useWorkspace() {
         err?.data?.data?.issues?.[0]?.message ||
         err?.data?.message ||
         'Не удалось сохранить изменения'
+      const status = err?.statusCode || err?.response?.status
+      // The local copy is stale: reload it so the user sees the current state before retrying.
+      if (status === 404 || status === 409) await refresh()
       notify(message)
       throw new Error(message)
     } finally {

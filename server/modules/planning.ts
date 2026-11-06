@@ -150,9 +150,11 @@ export async function executePlanningCommand(
           set: { limit: command.data.limit },
         })
       break
-    case 'budget.delete':
-      await db.delete(budgets).where(eq(budgets.id, command.id))
+    case 'budget.delete': {
+      const deleted = await db.delete(budgets).where(eq(budgets.id, command.id)).returning()
+      if (!deleted.length) throw createError({ statusCode: 404, message: 'Лимит не найден' })
       break
+    }
     case 'budget.copy': {
       const source = await db.select().from(budgets).where(eq(budgets.month, command.from))
       let copied = 0

@@ -10,15 +10,14 @@
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "db:generate": "drizzle-kit generate"
+    "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@electric-sql/pglite": "latest",
+    "@electric-sql/pglite": "~0.5.15",
     "@nuxt/ui": "^4.0.0",
     "decimal.js": "^10.0.0",
-    "drizzle-orm": "latest",
-    "@lucide/vue": "latest",
+    "drizzle-orm": "~0.45.4",
+    "@lucide/vue": "^1.69.0",
     "h3": "^1.15.0",
     "nuxt": "^4.0.0",
     "papaparse": "^5.0.0",
@@ -28,12 +27,12 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "@types/papaparse": "latest",
-    "drizzle-kit": "latest",
+    "@types/node": "^26.6.6",
+    "@types/papaparse": "^5.5.2",
+    "drizzle-kit": "~0.31.11",
     "prettier": "^3.0.0",
     "typescript": "^5.0.0",
-    "vitest": "latest",
-    "vue-tsc": "latest"
+    "vitest": "^5.1.0",
+    "vue-tsc": "^3.3.14"
   }
 }

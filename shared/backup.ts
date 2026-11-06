@@ -31,6 +31,8 @@ const transaction = z
     id: z.uuid(),
     kind: z.enum(['expense', 'income', 'transfer', 'adjustment']),
     amount: signedAmount,
+    // Stored history is restored as is: "not in the future" applies to new input only.
+    date: z.iso.date(),
     createdAt: timestamp,
     deletedAt: timestamp.nullable().default(null),
     importAccountId: z.uuid().nullable().default(null),
@@ -203,7 +205,9 @@ export const backupSchema = z
     }
   })
 export type Backup = z.infer<typeof backupSchema>
+// Export must never fail because of one unexpected row: a backup that the restore preview
+// flags is better than no backup at all. Full validation happens on restore.
 export function createBackup(workspace: Workspace): Backup {
   const { revision: _revision, ...data } = workspace
-  return backupSchema.parse({ ...data, version: 3, exportedAt: new Date().toISOString() })
+  return { ...data, version: 3, exportedAt: new Date().toISOString() } as Backup
 }

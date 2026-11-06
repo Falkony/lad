@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { toMinor } from './money'
+import { localDate, toMinor } from './money'
 import type { TransactionKind } from './types'
 export interface ImportMapping {
   date: string
@@ -42,6 +42,8 @@ export async function previewImport(
     try {
       const row = data[i]!
       const date = parseBankDate(row[mapping.date] || '')
+      // The server rejects the whole import for one future row, so flag it here instead.
+      if (date > localDate()) throw new Error('дата в будущем, такие платежи ведите в календаре')
       const raw = (row[mapping.amount] || '')
         .replace(/\s/g, '')
         .replace(/₽|руб\.?/gi, '')

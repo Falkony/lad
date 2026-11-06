@@ -1,4 +1,4 @@
-import { eq, desc, sql, or, inArray } from 'drizzle-orm'
+import { and, eq, desc, sql, or, inArray, isNull, isNotNull } from 'drizzle-orm'
 import { createError } from 'h3'
 import { z } from 'zod'
 import { getDb } from '../db'
@@ -25,6 +25,8 @@ import {
   obligationSchema,
   importSchema,
   signedAmount,
+  pastDate,
+  revision,
 } from '../../shared/schemas'
 import { localDate, accountBalance } from '../../shared/money'
 import { backupSchema } from '../../shared/backup'
@@ -32,6 +34,12 @@ import type { Account, Transaction } from '../../shared/types'
 import type { Workspace } from '../../shared/types'
 import type { CommandResult } from '../../shared/planning-types'
 import { planningCommands, isPlanningCommand, executePlanningCommand } from './planning'
+
+/** Throws 404 when an update/delete touched nothing, so a stale UI does not report success. */
+export function found<T>(rows: T[], message: string): T[] {
+  if (!rows.length) throw createError({ statusCode: 404, message })
+  return rows
+}
 
 export async function readWorkspace(): Promise<Workspace> {
   const client = await getDb()
@@ -77,7 +85,12 @@ export async function readWorkspace(): Promise<Workspace> {
 export const commandSchema = z.discriminatedUnion('op', [
   ...planningCommands,
   z.object({ op: z.literal('account.create'), data: accountSchema }),
-  z.object({ op: z.literal('account.update'), id: z.uuid(), data: accountSchema }),
+  z.object({
+    op: z.literal('account.update'),
+    id: z.uuid(),
+    data: accountSchema,
+    expectedRevision: revision.optional(),
+  }),
   z.object({ op: z.literal('account.archive'), id: z.uuid(), archived: z.boolean() }),
   z.object({ op: z.literal('account.delete'), id: z.uuid() }),
   z.object({
@@ -91,7 +104,12 @@ export const commandSchema = z.discriminatedUnion('op', [
     }),
   }),
   z.object({ op: z.literal('transaction.create'), data: transactionSchema }),
-  z.object({ op: z.literal('transaction.update'), id: z.uuid(), data: transactionSchema }),
+  z.object({
+    op: z.literal('transaction.update'),
+    id: z.uuid(),
+    data: transactionSchema,
+    expectedRevision: revision.optional(),
+  }),
   z.object({ op: z.literal('transaction.delete'), id: z.uuid() }),
   z.object({ op: z.literal('transaction.restore'), id: z.uuid() }),
   z.object({
@@ -102,11 +120,16 @@ export const commandSchema = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('workspace.restore'),
     backup: backupSchema,
-    expectedRevision: z.string().regex(/^\d{1,20}$/),
+    expectedRevision: revision,
     confirmation: z.literal('ВОССТАНОВИТЬ'),
   }),
   z.object({ op: z.literal('goal.create'), data: goalSchema }),
-  z.object({ op: z.literal('goal.update'), id: z.uuid(), data: goalSchema }),
+  z.object({
+    op: z.literal('goal.update'),
+    id: z.uuid(),
+    data: goalSchema,
+    expectedRevision: revision.optional(),
+  }),
   z.object({ op: z.literal('goal.delete'), id: z.uuid() }),
   z.object({ op: z.literal('event.create'), data: eventSchema }),
   z.object({ op: z.literal('event.toggle'), id: z.uuid(), done: z.boolean() }),
@@ -122,11 +145,16 @@ export const commandSchema = z.discriminatedUnion('op', [
         .string()
         .regex(/^\d{1,16}$/)
         .refine((v) => BigInt(v) > 0n && BigInt(v) <= 9000000000000000n),
-      date: z.iso.date(),
+      date: pastDate('Дата покупки не может быть в будущем'),
     }),
   }),
   z.object({ op: z.literal('obligation.create'), data: obligationSchema }),
-  z.object({ op: z.literal('obligation.update'), id: z.uuid(), data: obligationSchema }),
+  z.object({
+    op: z.literal('obligation.update'),
+    id: z.uuid(),
+    data: obligationSchema,
+    expectedRevision: revision.optional(),
+  }),
   z.object({ op: z.literal('obligation.delete'), id: z.uuid() }),
   z.object({ op: z.literal('import'), data: importSchema }),
   z.object({ op: z.literal('demo.load') }),
@@ -154,6 +182,17 @@ export async function executeCommand(command: Command) {
         .where(eq(workspaceGuard.id, 1))
       return result
     }
+    // Full-object edits overwrite every field: reject forms opened before another change.
+    if (
+      'expectedRevision' in command &&
+      command.expectedRevision !== undefined &&
+      command.op !== 'workspace.restore' &&
+      command.expectedRevision !== guard!.revision
+    )
+      throw createError({
+        statusCode: 409,
+        message: 'Данные изменились в другой вкладке. Проверьте их и сохраните ещё раз.',
+      })
     let result: CommandResult = { ok: true }
     switch (command.op) {
       case 'account.create':
@@ -305,16 +344,24 @@ export async function executeCommand(command: Command) {
         break
       }
       case 'transaction.delete':
-        await db
-          .update(transactions)
-          .set({ deletedAt: new Date().toISOString() })
-          .where(eq(transactions.id, command.id))
+        found(
+          await db
+            .update(transactions)
+            .set({ deletedAt: new Date().toISOString() })
+            .where(and(eq(transactions.id, command.id), isNull(transactions.deletedAt)))
+            .returning(),
+          'Операция не найдена',
+        )
         break
       case 'transaction.restore':
-        await db
-          .update(transactions)
-          .set({ deletedAt: null })
-          .where(eq(transactions.id, command.id))
+        found(
+          await db
+            .update(transactions)
+            .set({ deletedAt: null })
+            .where(and(eq(transactions.id, command.id), isNotNull(transactions.deletedAt)))
+            .returning(),
+          'Удалённая операция не найдена',
+        )
         break
       case 'transactions.categorize': {
         const ids = [...new Set(command.ids)]
@@ -334,31 +381,51 @@ export async function executeCommand(command: Command) {
         await db.insert(goals).values({ id: crypto.randomUUID(), ...command.data })
         break
       case 'goal.update':
-        await db.update(goals).set(command.data).where(eq(goals.id, command.id))
+        found(
+          await db.update(goals).set(command.data).where(eq(goals.id, command.id)).returning(),
+          'Цель не найдена',
+        )
         break
       case 'goal.delete':
-        await db.delete(goals).where(eq(goals.id, command.id))
+        found(await db.delete(goals).where(eq(goals.id, command.id)).returning(), 'Цель не найдена')
         break
       case 'event.create':
         await db.insert(events).values({ id: crypto.randomUUID(), ...command.data })
         break
       case 'event.toggle':
-        await db.update(events).set({ done: command.done }).where(eq(events.id, command.id))
+        found(
+          await db
+            .update(events)
+            .set({ done: command.done })
+            .where(eq(events.id, command.id))
+            .returning(),
+          'Событие не найдено',
+        )
         break
       case 'event.delete':
-        await db.delete(events).where(eq(events.id, command.id))
+        found(
+          await db.delete(events).where(eq(events.id, command.id)).returning(),
+          'Событие не найдено',
+        )
         break
       case 'shopping.create':
         await db.insert(shopping).values({ id: crypto.randomUUID(), ...command.data })
         break
       case 'shopping.toggle':
-        await db
-          .update(shopping)
-          .set({ checked: command.checked })
-          .where(eq(shopping.id, command.id))
+        found(
+          await db
+            .update(shopping)
+            .set({ checked: command.checked })
+            .where(eq(shopping.id, command.id))
+            .returning(),
+          'Товар не найден',
+        )
         break
       case 'shopping.delete':
-        await db.delete(shopping).where(eq(shopping.id, command.id))
+        found(
+          await db.delete(shopping).where(eq(shopping.id, command.id)).returning(),
+          'Товар не найден',
+        )
         break
       case 'shopping.checkout': {
         await db.transaction(async (tx) => {
@@ -391,10 +458,20 @@ export async function executeCommand(command: Command) {
         await db.insert(obligations).values({ id: crypto.randomUUID(), ...command.data })
         break
       case 'obligation.update':
-        await db.update(obligations).set(command.data).where(eq(obligations.id, command.id))
+        found(
+          await db
+            .update(obligations)
+            .set(command.data)
+            .where(eq(obligations.id, command.id))
+            .returning(),
+          'Обязательство не найдено',
+        )
         break
       case 'obligation.delete':
-        await db.delete(obligations).where(eq(obligations.id, command.id))
+        found(
+          await db.delete(obligations).where(eq(obligations.id, command.id)).returning(),
+          'Обязательство не найдено',
+        )
         break
       case 'import': {
         let imported = 0

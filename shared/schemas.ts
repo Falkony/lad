@@ -17,6 +17,10 @@ export const positiveAmount = amount.refine(
   'Сумма должна быть больше нуля',
 )
 const date = z.iso.date()
+/** A date not later than today: recorded money movements cannot happen in the future. */
+export const pastDate = (message = 'Будущие операции добавляйте в календарь') =>
+  date.refine((value) => value <= localDate(), message)
+export const revision = z.string().regex(/^\d{1,20}$/)
 const title = z.string().trim().min(1).max(160)
 export const accountSchema = z.object({
   name: title,
@@ -37,7 +41,7 @@ export const transactionSchema = z
     toAccountId: z.uuid().nullable().default(null),
     category: title,
     description: z.string().trim().max(300).default(''),
-    date: date.refine((value) => value <= localDate(), 'Будущие операции добавляйте в календарь'),
+    date: pastDate(),
     importKey: z.string().max(300).nullable().default(null),
   })
   .refine((v) => v.kind !== 'transfer' || (v.toAccountId && v.toAccountId !== v.accountId), {
