@@ -25,7 +25,7 @@ import {
   obligationDirection,
   obligationOutlook,
   paymentSchedule,
-  suggestSplit,
+  paymentInterest,
   type ObligationData,
 } from '../../shared/obligations'
 import type { Obligation, ObligationEntry, Transaction } from '../../shared/types'
@@ -165,18 +165,20 @@ export async function syncObligations(db: WriteTransaction, currentRevision: str
       )
     const plan = outlook.plan
     const direction = obligationDirection(obligation)
-    const needed = outlook.remaining > 0n && BigInt(obligation.payment) > 0n
+    const bank = obligation.bankSchedule || []
+    const needed = outlook.remaining > 0n && (BigInt(obligation.payment) > 0n || bank.length > 0)
     if (needed) {
       const fields = planSchema.parse({
         title: obligation.title,
-        category: obligationCategory(obligation),
-        amount: obligation.payment,
+        category: plan?.category || obligationCategory(obligation),
+        amount: bank[0]?.amount || obligation.payment,
         accountId: obligation.accountId,
-        frequency: 'monthly',
+        frequency: bank.length ? 'custom' : 'monthly',
+        customDates: bank.map(({ date, amount }) => ({ date, amount })),
         interval: 1,
-        startDate: obligation.startDate,
-        endDate: outlook.payoff ? monthEnd(outlook.payoff) : null,
-        monthDays: [obligation.dueDay],
+        startDate: bank[0]?.date || obligation.startDate,
+        endDate: bank.at(-1)?.date || (outlook.payoff ? monthEnd(outlook.payoff) : null),
+        monthDays: bank.length ? [] : [obligation.dueDay],
       })
       const source = { source: 'obligation' as const, sourceId: obligation.id }
       if (plan && plan.direction !== direction) {
@@ -198,6 +200,7 @@ export async function syncObligations(db: WriteTransaction, currentRevision: str
         plan.accountId !== fields.accountId ||
         plan.startDate !== fields.startDate ||
         plan.monthDays.join() !== fields.monthDays.join() ||
+        JSON.stringify(plan.customDates || []) !== JSON.stringify(fields.customDates) ||
         !plan.active
       if (changed) {
         if (!plan.active) await db.update(plans).set({ active: true }).where(eq(plans.id, plan.id))
@@ -247,12 +250,22 @@ export async function afterPlanConfirm(
     .from(transactions)
     .where(eq(transactions.id, transactionId))
   const outlook = await outlookOf(db, obligation)
-  const { principal, interest } = suggestSplit(
-    outlook.remaining,
-    obligation.rate,
-    BigInt(transaction!.amount),
-    false,
-  )
+  const [occurrence] = await db
+    .select()
+    .from(planOccurrences)
+    .where(eq(planOccurrences.transactionId, transactionId))
+  const bank = obligation.bankSchedule?.find((r) => r.date === occurrence?.dueDate)
+  const due =
+    bank?.interest !== undefined
+      ? BigInt(bank.interest)
+      : paymentInterest(
+          obligation,
+          outlook.remaining,
+          transaction!.date,
+          outlook.lastPaidDate || obligation.startDate,
+        )
+  const interest = due < BigInt(transaction!.amount) ? due : BigInt(transaction!.amount)
+  const principal = BigInt(transaction!.amount) - interest
   if (principal > outlook.remaining)
     throw fail(
       400,

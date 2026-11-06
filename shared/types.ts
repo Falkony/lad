@@ -12,6 +12,7 @@ export const categories = [
 ] as const
 export type TransactionKind = 'expense' | 'income' | 'transfer' | 'adjustment'
 export interface Account {
+  creditSettings?: import('./credit').CreditSettings
   id: string
   name: string
   kind: string
@@ -64,6 +65,8 @@ export interface ShoppingItem {
 }
 export type ObligationKind = 'credit' | 'mortgage' | 'debt' | 'receivable'
 export interface Obligation {
+  bankSchedule?: { date: string; amount: string; interest?: string }[]
+  interestMethod?: 'monthly' | 'actual365'
   id: string
   title: string
   kind: ObligationKind

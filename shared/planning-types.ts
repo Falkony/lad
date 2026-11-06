@@ -5,10 +5,11 @@ export interface Budget {
   limit: string
 }
 export type PlanDirection = 'expense' | 'income'
-export type PlanFrequency = 'once' | 'monthly' | 'weekly' | 'yearly'
-export type PlanSource = 'manual' | 'obligation' | 'goal'
+export type PlanFrequency = 'once' | 'monthly' | 'weekly' | 'yearly' | 'custom'
+export type PlanSource = 'manual' | 'obligation' | 'goal' | 'credit'
 export type HolidayShift = 'none' | 'before'
 export interface PlanFields {
+  customDates?: { date: string; amount: string }[]
   title: string
   category: string
   amount: string
@@ -58,6 +59,8 @@ export interface PlanOccurrence {
   movedTo: string | null
 }
 export interface ProjectedOccurrence extends Omit<PlanOccurrence, 'status'> {
+  source?: PlanSource
+  creditAccountId?: string | null
   /** `deleted`: confirmed, but the linked transaction was deleted afterwards. */
   status: OccurrenceStatus | 'deleted'
   direction: PlanDirection

@@ -12,6 +12,7 @@ const mode = ref('create'),
   revision = ref(''),
   error = ref('')
 const income = computed(() => item.value?.direction === 'income')
+const credit = computed(() => item.value?.source === 'credit')
 /** A date of an obligation schedule: the payment is split into principal and interest. */
 const obligation = computed(() => {
   const plan = w.value.plans.find((p) => p.id === item.value?.planId)
@@ -37,7 +38,8 @@ watch(item, (value) => {
 const available = computed(() =>
   w.value.transactions.filter(
     (t) =>
-      t.kind === item.value?.direction &&
+      t.kind === (credit.value ? 'transfer' : item.value?.direction) &&
+      (!credit.value || t.toAccountId === item.value?.creditAccountId) &&
       !w.value.planOccurrences.some((p) => p.transactionId === t.id) &&
       !w.value.obligationEntries.some((e) => e.transactionId === t.id) &&
       `${t.description} ${t.category} ${t.date} ${money(t.amount)}`
@@ -46,7 +48,7 @@ const available = computed(() =>
   ),
 )
 const linked = computed(() => w.value.transactions.find((t) => t.id === transactionId.value))
-const noun = computed(() => (income.value ? 'доход' : 'расход'))
+const noun = computed(() => (credit.value ? 'перевод' : income.value ? 'доход' : 'расход'))
 async function save() {
   if (!item.value) return
   error.value = ''
@@ -67,9 +69,11 @@ async function save() {
         ? 'Эта дата уже была подтверждена'
         : mode.value === 'link'
           ? `Существующий ${noun.value} связан с планом`
-          : income.value
-            ? 'Поступление записано в доходы'
-            : 'Оплата записана в расходы',
+          : credit.value
+            ? 'Погашение записано переводом на карту'
+            : income.value
+              ? 'Поступление записано в доходы'
+              : 'Оплата записана в расходы',
     )
     item.value = null
   } catch (e: any) {
@@ -93,7 +97,7 @@ async function save() {
       </div>
       <div class="segmented">
         <button type="button" :class="{ selected: mode === 'create' }" @click="mode = 'create'">
-          {{ income ? 'Новый доход' : 'Новый расход' }}</button
+          {{ credit ? 'Перевод на карту' : income ? 'Новый доход' : 'Новый расход' }}</button
         ><button type="button" :class="{ selected: mode === 'link' }" @click="mode = 'link'">
           Уже записан
         </button>
@@ -107,7 +111,9 @@ async function save() {
           }}<select v-model="accountId" required>
             <option value="" disabled>Выберите счёт</option>
             <option
-              v-for="account in w.accounts.filter((a) => !a.archived)"
+              v-for="account in w.accounts.filter(
+                (a) => !a.archived && (!credit || a.kind !== 'credit'),
+              )"
               :key="account.id"
               :value="account.id"
             >

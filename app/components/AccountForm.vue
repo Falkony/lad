@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { Account } from '../../shared/types'
-import { toMajor, toSignedMinor } from '../../shared/money'
+import { creditSettingsSchema } from '../../shared/credit'
+import { toMinor, toMajor, toSignedMinor } from '../../shared/money'
 const props = defineProps<{ account?: Account | null }>()
 const emit = defineEmits<{ saved: [] }>()
-const { command, pending } = useWorkspace()
+const { workspace: w, command, pending } = useWorkspace()
 const form = reactive({
   name: '',
   kind: 'card',
@@ -13,13 +14,15 @@ const form = reactive({
   last4: '',
   inForecast: true,
 })
+const credit = reactive({ ...creditSettingsSchema.parse({}), limit: '0', minimumPayment: '0' })
 const error = ref('')
 // Until the user decides, savings stay outside the forecast and other accounts take part.
 const forecastTouched = ref(false)
 watch(
   () => form.kind,
   (kind) => {
-    if (!props.account && !forecastTouched.value) form.inForecast = kind !== 'savings'
+    if (!props.account && !forecastTouched.value)
+      form.inForecast = !['savings', 'credit'].includes(kind)
   },
 )
 watch(
@@ -39,6 +42,8 @@ watch(
             inForecast: true,
           },
     )
+    const c = creditSettingsSchema.parse(account?.creditSettings || {})
+    Object.assign(credit, c, { limit: toMajor(c.limit), minimumPayment: toMajor(c.minimumPayment) })
     forecastTouched.value = false
     error.value = ''
   },
@@ -50,7 +55,14 @@ async function save() {
     const data = {
       ...form,
       openingBalance: toSignedMinor(form.openingBalance || '0'),
-      last4: form.kind === 'card' ? form.last4 : '',
+      last4: ['card', 'credit'].includes(form.kind) ? form.last4 : '',
+      creditSettings: {
+        ...credit,
+        limit: toMinor(credit.limit),
+        minimumPayment: toMinor(credit.minimumPayment),
+        graceUntil: credit.graceUntil || null,
+        payerAccountId: credit.payerAccountId || null,
+      },
     }
     await command(
       props.account
@@ -76,6 +88,7 @@ async function save() {
     <div class="form-row">
       <label
         >Тип счёта<select v-model="form.kind">
+          <option value="credit">Кредитная карта</option>
           <option value="card">Банковская карта</option>
           <option value="savings">Накопления</option>
           <option value="cash">Наличные</option>
@@ -101,6 +114,37 @@ async function save() {
         ></span
       ></label
     >
+    <fieldset v-if="form.kind === 'credit'" class="form-stack">
+      <legend>Условия кредитной карты</legend>
+      <label>Лимит, ₽<input v-model="credit.limit" inputmode="decimal" required /></label>
+      <label
+        >Минимальный платёж из выписки, ₽<input
+          v-model="credit.minimumPayment"
+          inputmode="decimal"
+          required
+      /></label>
+      <label
+        >День платежа<input v-model.number="credit.paymentDay" type="number" min="1" max="31"
+      /></label>
+      <label>Льготный период до<input v-model="credit.graceUntil" type="date" /></label>
+      <label><input v-model="credit.payFull" type="checkbox" /> Планировать полное погашение</label>
+      <label
+        >Счёт погашения<select v-model="credit.payerAccountId">
+          <option :value="null">Выбрать при оплате</option>
+          <option
+            v-for="a in w.accounts.filter((a) => !a.archived && a.kind !== 'credit')"
+            :key="a.id"
+            :value="a.id"
+          >
+            {{ a.name }}
+          </option>
+        </select></label
+      >
+      <p class="form-hint">
+        Долг — отрицательный остаток. Погашение в календаре создаёт перевод на карту. Минимальный
+        платёж и льготную дату вводите из выписки банка.
+      </p>
+    </fieldset>
     <fieldset class="color-picker">
       <legend>Цвет</legend>
       <label

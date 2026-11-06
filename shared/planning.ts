@@ -28,6 +28,11 @@ export function recurringDates(version: PlanVersion, from: string, to: string): 
   const low = [from, version.startDate, version.validFrom].sort().at(-1)!
   const high = [to, version.endDate, version.validTo].filter((v): v is string => !!v).sort()[0]!
   if (low > high) return []
+  if (version.frequency === 'custom')
+    return (version.customDates || [])
+      .map((r) => r.date)
+      .filter((d) => d >= low && d <= high)
+      .sort()
   if (version.frequency === 'once') return [version.startDate]
   const [year, month, day] = version.startDate.split('-').map(Number) as [number, number, number]
   const output: string[] = []
@@ -103,13 +108,15 @@ function project(workspace: PlanningWorkspace, selection: Selection): ProjectedO
         date,
         title: version.title,
         category: version.category,
-        amount: version.amount,
+        amount: version.customDates?.find((r) => r.date === dueDate)?.amount || version.amount,
         accountId: version.accountId,
         note: version.note,
         status: 'pending',
         transactionId: null,
         movedTo: null,
         direction: plan.direction,
+        source: plan.source,
+        creditAccountId: plan.source === 'credit' ? plan.sourceId : null,
         frequency: plan.frequency,
         actualAmount: null,
         actualDate: null,
@@ -136,6 +143,8 @@ function project(workspace: PlanningWorkspace, selection: Selection): ProjectedO
       id: key,
       date: occurrence.movedTo || shifted.get(key) || occurrence.dueDate,
       direction: plan.direction,
+      source: plan.source,
+      creditAccountId: plan.source === 'credit' ? plan.sourceId : null,
       frequency: plan.frequency,
       status:
         occurrence.status === 'paid' && (!transaction || transaction.deletedAt)
@@ -178,7 +187,7 @@ export function categorySpending(transactions: Transaction[], month: string) {
 }
 function openTotal(items: ProjectedOccurrence[], direction: PlanDirection) {
   return items
-    .filter((item) => item.direction === direction && isOpen(item))
+    .filter((item) => item.source !== 'credit' && item.direction === direction && isOpen(item))
     .reduce((sum, item) => sum + BigInt(item.amount), 0n)
 }
 /** Income and payment plan of a month: what already happened and what is still expected. */
@@ -207,7 +216,7 @@ export function budgetRows(workspace: Workspace, month: string) {
     planned = new Map<string, bigint>()
   const range = monthRange(month)
   for (const item of projectPlans(workspace, range.from, range.to))
-    if (item.direction === 'expense' && isOpen(item))
+    if (item.source !== 'credit' && item.direction === 'expense' && isOpen(item))
       planned.set(item.category, (planned.get(item.category) || 0n) + BigInt(item.amount))
   return workspace.budgets
     .filter((b) => b.month === month)
@@ -228,6 +237,7 @@ export function budgetRows(workspace: Workspace, month: string) {
     .sort((a, b) => a.category.localeCompare(b.category, 'ru'))
 }
 export function frequencyLabel(frequency: string, interval: number, monthDays: number[] = []) {
+  if (frequency === 'custom') return 'По введённым датам'
   if (frequency === 'once') return 'Один раз'
   if (frequency === 'monthly' && monthDays.length > 1) {
     const days = monthDays.slice(0, -1).join(', ') + ' и ' + monthDays.at(-1)

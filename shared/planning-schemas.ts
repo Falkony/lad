@@ -8,11 +8,16 @@ export const budgetSchema = z.object({
 })
 export const directionSchema = z.enum(['expense', 'income'])
 const planShape = {
+  customDates: z
+    .array(z.object({ date: z.iso.date(), amount: positiveAmount }))
+    .max(1200)
+    .default([])
+    .refine((rows) => new Set(rows.map((r) => r.date)).size === rows.length, 'Даты повторяются'),
   title: z.string().trim().min(1).max(160),
   category: z.string().trim().min(1).max(160),
   amount: positiveAmount,
   accountId: z.uuid().nullable().default(null),
-  frequency: z.enum(['once', 'monthly', 'weekly', 'yearly']),
+  frequency: z.enum(['once', 'monthly', 'weekly', 'yearly', 'custom']),
   interval: z.number().int().min(1).max(12).default(1),
   startDate: z.iso.date(),
   endDate: z.iso.date().nullable().default(null),

@@ -5,6 +5,7 @@ import { commandHistory, workspaceGuard } from '../db/schema'
 import type { Command } from './workspace'
 import type { CommandResult } from '../../shared/planning-types'
 import type { CommandHistoryPage } from '../../shared/command-history'
+import { syncCreditCards } from './credit'
 
 export async function finishCommand(
   db: WriteTransaction,
@@ -12,6 +13,7 @@ export async function finishCommand(
   result: CommandResult,
   revisionBefore: string,
 ) {
+  await syncCreditCards(db, revisionBefore)
   let base = BigInt(revisionBefore)
   if (command.op === 'workspace.restore')
     for (const entry of command.backup.commandHistory)

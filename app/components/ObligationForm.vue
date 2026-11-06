@@ -14,6 +14,8 @@ const blank = () => ({
   payment: '',
   dueDay: 10,
   rate: '0',
+  interestMethod: 'monthly' as 'monthly' | 'actual365',
+  bankText: '',
 })
 const form = reactive(blank()),
   error = ref('')
@@ -33,6 +35,13 @@ watch(
             openingBalance: toMajor(o.openingBalance),
             payment: toMajor(o.payment),
             accountId: o.accountId || '',
+            bankText: (o.bankSchedule || [])
+              .map(
+                (r) =>
+                  `${r.date}; ${toMajor(r.amount)}; ${r.interest === undefined ? '' : toMajor(r.interest)}`,
+              )
+              .join('\n'),
+            interestMethod: o.interestMethod || 'monthly',
           }
         : blank(),
     )
@@ -50,6 +59,19 @@ async function save() {
       payment: toMinor(form.payment || '0'),
       rate: form.rate.replace(',', '.'),
       accountId: form.accountId || null,
+      bankSchedule: form.bankText.trim()
+        ? form.bankText
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => {
+              const [date = '', amount = '', interest = ''] = line.split(';').map((s) => s.trim())
+              return {
+                date,
+                amount: toMinor(amount),
+                ...(interest ? { interest: toMinor(interest) } : {}),
+              }
+            })
+        : [],
     }
     await command(
       props.obligation
@@ -124,6 +146,22 @@ async function save() {
         погашения.</template
       >
     </p>
+    <label
+      >Расчёт процентов<select v-model="form.interestMethod">
+        <option value="monthly">Оценка: ставка / 12</option>
+        <option value="actual365">Фактические дни / 365</option>
+      </select></label
+    >
+    <label
+      >График банка<textarea
+        v-model="form.bankText"
+        rows="5"
+        placeholder="2026-12-10; 15000; 2000"
+      /><span class="form-hint"
+        >Каждая строка: дата; платёж в рублях; проценты в рублях (необязательно). Введённые даты и
+        суммы заменяют расчётный график; проценты из банка имеют приоритет.</span
+      ></label
+    >
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     <div class="dialog-actions">
       <button

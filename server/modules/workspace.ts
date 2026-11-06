@@ -260,7 +260,7 @@ async function executeWorkspaceCommand(command: Command) {
       // The schedule of an obligation is edited through the obligation itself.
       if ('id' in command && command.id && command.op.startsWith('plan.')) {
         const [plan] = await db.select().from(plans).where(eq(plans.id, command.id))
-        if (plan?.source === 'obligation')
+        if (plan?.source === 'obligation' || plan?.source === 'credit')
           throw createError({
             statusCode: 400,
             message:
@@ -297,7 +297,7 @@ async function executeWorkspaceCommand(command: Command) {
         await db.insert(accounts).values({
           id: crypto.randomUUID(),
           ...command.data,
-          inForecast: command.data.inForecast ?? command.data.kind !== 'savings',
+          inForecast: command.data.inForecast ?? !['savings', 'credit'].includes(command.data.kind),
         })
         break
       case 'account.update': {
@@ -405,12 +405,16 @@ async function executeWorkspaceCommand(command: Command) {
           // A transaction confirming a plan keeps the plan's direction: an expense for a
           // payment, an income for an expected income.
           const [link] = await db
-            .select({ direction: plans.direction })
+            .select({ direction: plans.direction, source: plans.source, sourceId: plans.sourceId })
             .from(planOccurrences)
             .innerJoin(plans, eq(plans.id, planOccurrences.planId))
             .where(eq(planOccurrences.transactionId, previous.id))
             .limit(1)
-          if (link && command.data.kind !== link.direction)
+          if (
+            link &&
+            (command.data.kind !== (link.source === 'credit' ? 'transfer' : link.direction) ||
+              (link.source === 'credit' && command.data.toAccountId !== link.sourceId))
+          )
             throw createError({
               statusCode: 409,
               message: `Операция подтверждает план и должна оставаться ${

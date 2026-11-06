@@ -114,6 +114,7 @@ async function addSchedule(
     endDate: fields.endDate,
     note: fields.note,
     monthDays: fields.monthDays,
+    customDates: fields.customDates || [],
     holidayShift: fields.holidayShift,
     validFrom,
     validTo: null,
@@ -154,7 +155,7 @@ export async function executePlanningCommand(
   command: PlanningCommand,
   currentRevision: string,
   /** Internal callers: the owner of a plan they create (an obligation's payment schedule). */
-  owner: { source: 'obligation'; sourceId: string } | null = null,
+  owner: { source: 'obligation' | 'credit'; sourceId: string } | null = null,
 ): Promise<CommandResult> {
   switch (command.op) {
     case 'budget.set':
@@ -369,7 +370,12 @@ export async function executePlanningCommand(
       let transactionId = command.transactionId
       if (command.mode === 'link') {
         const transaction = history.find((t) => t.id === transactionId)
-        if (!transaction || transaction.deletedAt || transaction.kind !== plan.direction)
+        if (
+          !transaction ||
+          transaction.deletedAt ||
+          transaction.kind !== (plan.source === 'credit' ? 'transfer' : plan.direction) ||
+          (plan.source === 'credit' && transaction.toAccountId !== plan.sourceId)
+        )
           throw createError({
             statusCode: 400,
             message: `Выберите действующую операцию, которая является ${directionWord(plan)}`,
@@ -390,10 +396,13 @@ export async function executePlanningCommand(
           .where(eq(accounts.id, command.accountId!))
         if (!account || account.archived)
           throw createError({ statusCode: 400, message: 'Выберите действующий счёт' })
+        if (plan.source === 'credit' && (account.id === plan.sourceId || account.kind === 'credit'))
+          throw createError({ statusCode: 400, message: 'Выберите счёт собственных денег' })
         transactionId = crypto.randomUUID()
         await db.insert(transactions).values({
           id: transactionId,
-          kind: plan.direction,
+          kind: plan.source === 'credit' ? 'transfer' : plan.direction,
+          toAccountId: plan.source === 'credit' ? plan.sourceId : null,
           amount: command.amount!,
           accountId: account.id,
           category: item.category,

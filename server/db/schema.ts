@@ -26,6 +26,17 @@ const categoryReference = () =>
     .default(sql`NULL`)
     .notNull()
 export const accounts = pgTable('accounts', {
+  creditSettings: jsonb('credit_settings')
+    .$type<import('../../shared/credit').CreditSettings>()
+    .notNull()
+    .default({
+      limit: '0',
+      minimumPayment: '0',
+      paymentDay: 20,
+      graceUntil: null,
+      payerAccountId: null,
+      payFull: true,
+    }),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   kind: text('kind').notNull(),
@@ -89,6 +100,11 @@ export const shopping = pgTable('shopping', {
   checked: boolean('checked').notNull().default(false),
 })
 export const obligations = pgTable('obligations', {
+  bankSchedule: jsonb('bank_schedule')
+    .$type<NonNullable<import('../../shared/types').Obligation['bankSchedule']>>()
+    .notNull()
+    .default([]),
+  interestMethod: text('interest_method').notNull().default('monthly'),
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   kind: text('kind').notNull(),
@@ -151,6 +167,10 @@ export const budgets = pgTable(
   (t) => [uniqueIndex('budgets_month_category').on(t.month, t.category)],
 )
 const planFields = () => ({
+  customDates: jsonb('custom_dates')
+    .$type<{ date: string; amount: string }[]>()
+    .notNull()
+    .default([]),
   title: text('title').notNull(),
   category: text('category').notNull(),
   categoryId: categoryReference(),

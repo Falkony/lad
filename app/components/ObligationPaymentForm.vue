@@ -8,7 +8,7 @@ import { isOpen, projectPlans, addDays } from '../../shared/planning'
 import {
   annuityPayment,
   isReceivable,
-  monthlyInterest,
+  paymentInterest,
   obligationDirection,
   obligationOutlook,
   paymentSchedule,
@@ -70,7 +70,7 @@ function reset() {
     return
   }
   const due = openDates.value.find((d) => d.dueDate === props.dueDate) || openDates.value[0]
-  const scheduled = !!due && BigInt(props.obligation.payment) > 0n
+  const scheduled = !!due
   Object.assign(form, {
     kind: scheduled ? 'scheduled' : 'early',
     dueDate: due?.dueDate || '',
@@ -93,7 +93,18 @@ function suggestInterest() {
   form.interest =
     form.kind === 'early'
       ? ''
-      : toMajor(monthlyInterest(outlook.value.remaining, props.obligation.rate).toString())
+      : toMajor(
+          paymentInterest(
+            props.obligation,
+            outlook.value.remaining,
+            props.obligation.bankSchedule?.some(
+              (r) => r.date === form.dueDate && r.interest !== undefined,
+            )
+              ? form.dueDate
+              : form.date,
+            outlook.value.lastPaidDate || props.obligation.startDate,
+          ).toString(),
+        )
 }
 watch(() => [props.obligation.id, props.entry?.id, props.dueDate], reset, { immediate: true })
 watch(
@@ -103,6 +114,7 @@ watch(
     if (due && !props.entry) {
       form.total = toMajor(due.amount)
       form.date = due.date < today ? due.date : today
+      suggestInterest()
     }
   },
 )
@@ -344,8 +356,8 @@ async function save() {
       если банк так их списал, или уменьшите сумму.
     </p>
     <p v-else class="form-hint">
-      Проценты подставлены расчётом за месяц: остаток × ставка / 12. Сверьте их с выпиской банка —
-      от этого зависит, насколько уменьшится долг.
+      Проценты подставлены из графика банка или по выбранному способу расчёта. Сверьте их с выпиской
+      банка — от этого зависит, насколько уменьшится долг.
     </p>
     <fieldset v-if="!entry && form.kind === 'early' && preview" class="early-choice">
       <legend>После досрочного погашения</legend>

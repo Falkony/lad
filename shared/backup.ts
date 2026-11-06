@@ -24,7 +24,7 @@ import {
 type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-export const backupVersion = 6
+export const backupVersion = 7
 export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
@@ -84,12 +84,12 @@ const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
  */
 export function upgradeBackup(input: unknown): unknown {
   const upgraded = upgradeObligations(upgradePlans(input))
-  if (isRow(input) && [1, 2, 3, 4, 5].includes(input.version as number) && isRow(upgraded))
+  if (isRow(input) && [1, 2, 3, 4, 5, 6].includes(input.version as number) && isRow(upgraded))
     return withCategoryIds({
       ...upgraded,
       timeZone: upgraded.timeZone || 'Europe/Moscow',
       version: backupVersion,
-      commandHistory: input.version === 5 ? upgraded.commandHistory : [],
+      commandHistory: [5, 6].includes(input.version as number) ? upgraded.commandHistory : [],
     })
   return upgraded
 }
@@ -207,7 +207,7 @@ const plan = planSchema.safeExtend({
   categoryId: z.uuid(),
   active: z.boolean(),
   direction: directionSchema,
-  source: z.enum(['manual', 'obligation', 'goal']).default('manual'),
+  source: z.enum(['manual', 'obligation', 'goal', 'credit']).default('manual'),
   sourceId: z.string().max(100).nullable().default(null),
 })
 const backupObject = z
@@ -367,6 +367,19 @@ const backupObject = z
       allTransactions = new Map(
         [...backup.transactions, ...backup.deletedTransactions].map((t) => [t.id, t]),
       )
+    for (const card of backup.accounts.filter((a) => a.kind === 'credit')) {
+      if (BigInt(card.creditSettings.limit) <= 0n)
+        issue('Кредитный лимит должен быть положительным')
+      const payer = backup.accounts.find((a) => a.id === card.creditSettings.payerAccountId)
+      if (
+        card.creditSettings.payerAccountId &&
+        (!payer || payer.kind === 'credit' || payer.archived)
+      )
+        issue('Счёт погашения карты недоступен')
+    }
+    for (const plan of backup.plans.filter((p) => p.source === 'credit'))
+      if (!backup.accounts.some((a) => a.id === plan.sourceId && a.kind === 'credit'))
+        issue('План погашения ссылается на отсутствующую кредитную карту')
     const budgetKeys = new Set<string>(),
       dateKeys = new Set<string>(),
       linked = new Set<string>()
@@ -410,7 +423,12 @@ const backupObject = z
       dateKeys.add(key)
       if (occurrence.transactionId) {
         const tx = allTransactions.get(occurrence.transactionId)
-        if (!tx || (owner && tx.kind !== owner.direction))
+        if (
+          !tx ||
+          (owner &&
+            (tx.kind !== (owner.source === 'credit' ? 'transfer' : owner.direction) ||
+              (owner.source === 'credit' && tx.toAccountId !== owner.sourceId)))
+        )
           issue('Подтверждение должно ссылаться на существующую операцию того же направления')
         if (linked.has(occurrence.transactionId))
           issue('Одна операция подтверждает несколько дат плана')

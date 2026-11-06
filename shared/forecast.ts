@@ -1,6 +1,7 @@
 import type { Account, Transaction, Workspace } from './types'
 import type { PlanDirection, ProjectedOccurrence } from './planning-types'
 import { accountBalance } from './money'
+import { creditLimit } from './credit'
 import { addDays, isOpen, projectPlans } from './planning'
 
 /** Overdue open dates are still expected: they are counted on the first forecast day. */
@@ -11,6 +12,7 @@ export type ForecastWorkspace = Pick<
   'accounts' | 'transactions' | 'deletedTransactions' | 'plans' | 'planVersions' | 'planOccurrences'
 >
 export interface ForecastEvent {
+  toAccountId?: string | null
   /** `planId:dueDate`, the key of the projected date. */
   id: string
   planId: string
@@ -36,6 +38,8 @@ export interface BalanceSummary {
   deficitDate: string | null
 }
 export interface AccountForecast extends BalanceSummary {
+  available?: string
+  minAvailable?: string
   account: Account
 }
 export interface ForecastDay {
@@ -76,6 +80,7 @@ function toEvent(item: ProjectedOccurrence, today: string): ForecastEvent {
     direction: item.direction,
     amount: item.amount,
     accountId: item.accountId,
+    toAccountId: item.creditAccountId,
   }
 }
 
@@ -83,16 +88,17 @@ function summarize(
   start: bigint,
   days: { date: string; balance: bigint }[],
   events: ForecastEvent[],
+  floor = 0n,
 ) {
   let min = start,
     minDate = days[0]!.date,
-    deficitDate: string | null = start < 0n ? days[0]!.date : null
+    deficitDate: string | null = start < floor ? days[0]!.date : null
   for (const day of days) {
     if (day.balance < min) {
       min = day.balance
       minDate = day.date
     }
-    if (deficitDate === null && day.balance < 0n) deficitDate = day.date
+    if (deficitDate === null && day.balance < floor) deficitDate = day.date
   }
   const total = (direction: PlanDirection) =>
     events
@@ -124,8 +130,30 @@ export function forecast(workspace: ForecastWorkspace, today: string, days: numb
     .filter(isOpen)
     .map((item) => toEvent(item, today))
     .sort((a, b) => a.date.localeCompare(b.date) || Number(b.overdue) - Number(a.overdue))
-  const scoped = events.filter((e) => !e.accountId || includedIds.has(e.accountId))
-  const outsideEvents = events.filter((e) => e.accountId && !includedIds.has(e.accountId))
+  const scoped = events.filter(
+    (e) =>
+      !e.accountId ||
+      includedIds.has(e.accountId) ||
+      (!!e.toAccountId && includedIds.has(e.toAccountId)),
+  )
+  const outsideEvents = events.filter((e) => !scoped.includes(e))
+  const eventsFor = (id: string) =>
+    scoped.flatMap((e) =>
+      e.accountId === id
+        ? [e]
+        : e.toAccountId === id
+          ? [{ ...e, direction: 'income' as const }]
+          : [],
+    )
+  const totalEvents = scoped.flatMap((e) =>
+    !e.toAccountId
+      ? [e]
+      : includedIds.has(e.toAccountId)
+        ? !e.accountId || includedIds.has(e.accountId)
+          ? []
+          : [{ ...e, direction: 'income' as const }]
+        : [e],
+  )
 
   const start = new Map(
     included.map((a) => [a.id, BigInt(accountBalance(a, workspace.transactions))]),
@@ -140,10 +168,14 @@ export function forecast(workspace: ForecastWorkspace, today: string, days: numb
   const totalSeries: { date: string; balance: bigint }[] = []
   for (let date = today; date <= to; date = addDays(date, 1)) {
     const dayEvents = byDate.get(date) || []
-    for (const event of dayEvents)
-      if (event.accountId)
-        running.set(event.accountId, running.get(event.accountId)! + signed(event))
-      else unassigned += signed(event)
+    for (const event of dayEvents) {
+      if (event.accountId) {
+        if (running.has(event.accountId))
+          running.set(event.accountId, running.get(event.accountId)! + signed(event))
+      } else unassigned += signed(event)
+      if (event.toAccountId && running.has(event.toAccountId))
+        running.set(event.toAccountId, running.get(event.toAccountId)! + BigInt(event.amount))
+    }
     let total = unassigned
     const accounts: Record<string, string> = {}
     for (const account of included) {
@@ -162,15 +194,30 @@ export function forecast(workspace: ForecastWorkspace, today: string, days: numb
   return {
     from: today,
     to,
-    total: summarize(startTotal, totalSeries, scoped),
-    accounts: included.map((account) => ({
-      account,
-      ...summarize(
+    total: summarize(
+      startTotal,
+      totalSeries,
+      totalEvents,
+      -included.reduce((sum, a) => sum + creditLimit(a), 0n),
+    ),
+    accounts: included.map((account) => {
+      const summary = summarize(
         start.get(account.id)!,
         perAccount.get(account.id)!,
-        scoped.filter((e) => e.accountId === account.id),
-      ),
-    })),
+        eventsFor(account.id),
+        -creditLimit(account),
+      )
+      return {
+        account,
+        ...summary,
+        ...(account.kind === 'credit'
+          ? {
+              available: (BigInt(summary.start) + creditLimit(account)).toString(),
+              minAvailable: (BigInt(summary.min) + creditLimit(account)).toString(),
+            }
+          : {}),
+      }
+    }),
     unassigned: {
       incomes: unassignedSummary.incomes,
       payments: unassignedSummary.payments,

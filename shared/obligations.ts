@@ -28,6 +28,23 @@ export function monthlyInterest(remaining: bigint, rate: string) {
   const scale = 1_200_000n // 12 months × 100 % × 1000
   return (remaining * rateMilli(rate) * 2n + scale) / (2n * scale)
 }
+/** Actual elapsed UTC calendar days; denominator is 365 even in a leap year. */
+export function actual365Interest(remaining: bigint, rate: string, from: string, to: string) {
+  const days = Math.max(
+    0,
+    Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000),
+  )
+  const scale = 36_500_000n
+  return (remaining * rateMilli(rate) * BigInt(days) * 2n + scale) / (2n * scale)
+}
+export function paymentInterest(o: Obligation, remaining: bigint, date: string, previous: string) {
+  const bank = o.bankSchedule?.find((r) => r.date === date)
+  return bank?.interest !== undefined
+    ? BigInt(bank.interest)
+    : o.interestMethod === 'actual365'
+      ? actual365Interest(remaining, o.rate, previous, date)
+      : monthlyInterest(remaining, o.rate)
+}
 
 const pad = (n: number) => String(n).padStart(2, '0')
 /** The payment day in a month, clamped to the month's last day (the 31st in February → the 28th). */
@@ -111,16 +128,22 @@ export function paymentSchedule(
   firstDate: string,
   day: number,
   limit = 600,
+  method: 'monthly' | 'actual365' = 'monthly',
+  previousDate = firstDate,
 ) {
   const rows: ScheduleRow[] = []
   let balance = remaining,
     date = firstDate
   while (balance > 0n && rows.length < limit) {
-    const interest = monthlyInterest(balance, rate)
+    const interest =
+      method === 'actual365'
+        ? actual365Interest(balance, rate, previousDate, date)
+        : monthlyInterest(balance, rate)
     if (payment <= interest) break
     const amount = payment < balance + interest ? payment : balance + interest
     balance -= amount - interest
     rows.push({ date, payment: amount, interest, principal: amount - interest, remaining: balance })
+    previousDate = date
     date = nextDueDate(date, day)
   }
   return { rows, complete: balance <= 0n }
@@ -198,10 +221,49 @@ export function obligationOutlook(obligation: Obligation, data: ObligationData) 
   const state = obligationState(obligation, data.obligationEntries, active)
   const firstOpen = firstOpenDate(obligation, data, active)
   const payment = BigInt(obligation.payment)
-  const schedule =
+  let schedule =
     state.remaining > 0n && payment > 0n
-      ? paymentSchedule(state.remaining, obligation.rate, payment, firstOpen, obligation.dueDay)
+      ? paymentSchedule(
+          state.remaining,
+          obligation.rate,
+          payment,
+          firstOpen,
+          obligation.dueDay,
+          600,
+          obligation.interestMethod,
+          state.lastPaidDate || obligation.startDate,
+        )
       : { rows: [] as ScheduleRow[], complete: state.remaining <= 0n }
+  if (obligation.bankSchedule?.length) {
+    const plan = obligationPlan(data, obligation.id)
+    const decided = new Set(
+      data.planOccurrences
+        .filter(
+          (o) =>
+            o.planId === plan?.id &&
+            (o.status === 'skipped' ||
+              o.status === 'closed' ||
+              (o.status === 'paid' && !!o.transactionId && active.has(o.transactionId))),
+        )
+        .map((o) => o.dueDate),
+    )
+    let balance = state.remaining,
+      previous = state.lastPaidDate || obligation.startDate
+    const rows: ScheduleRow[] = []
+    for (const row of obligation.bankSchedule
+      .filter((r) => !decided.has(r.date))
+      .sort((a, b) => a.date.localeCompare(b.date))) {
+      if (balance <= 0n) break
+      const interest = paymentInterest(obligation, balance, row.date, previous),
+        amount = BigInt(row.amount)
+      if (amount <= interest) break
+      const principal = amount - interest < balance ? amount - interest : balance
+      balance -= principal
+      rows.push({ date: row.date, payment: amount, interest, principal, remaining: balance })
+      previous = row.date
+    }
+    schedule = { rows, complete: balance <= 0n }
+  }
   return {
     ...state,
     firstOpen,

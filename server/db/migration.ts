@@ -6,6 +6,7 @@ import { payDaysMigration } from './pay-days-migration'
 import { obligationMigration } from './obligation-migration'
 import { commandHistoryMigration } from './command-history-migration'
 import { foundationMigration } from './foundation-migration'
+import { creditMigration } from './credit-migration'
 
 export const migrationSteps = [
   { version: 4, sql: repairImportOrigin },
@@ -16,6 +17,7 @@ export const migrationSteps = [
   { version: 9, sql: obligationMigration },
   { version: 10, sql: commandHistoryMigration },
   { version: 11, sql: foundationMigration },
+  { version: 12, sql: creditMigration },
 ]
 export const latestMigrationVersion = migrationSteps.at(-1)!.version
 

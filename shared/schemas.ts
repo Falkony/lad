@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { localDate } from './money'
+import { creditSettingsSchema } from './credit'
 z.config(z.locales.ru())
 export const amount = z
   .string()
@@ -24,7 +25,8 @@ export const revision = z.string().regex(/^\d{1,20}$/)
 const title = z.string().trim().min(1).max(160)
 export const accountSchema = z.object({
   name: title,
-  kind: z.enum(['card', 'cash', 'savings']).default('card'),
+  kind: z.enum(['card', 'cash', 'savings', 'credit']).default('card'),
+  creditSettings: creditSettingsSchema.default(() => creditSettingsSchema.parse({})),
   openingBalance: signedAmount,
   color: z.enum(['green', 'blue', 'sand']).default('green'),
   bankName: z.string().trim().max(80).default(''),
@@ -74,6 +76,23 @@ export const shoppingSchema = z.object({
   checked: z.boolean().default(false),
 })
 export const obligationSchema = z.object({
+  bankSchedule: z
+    .array(
+      z
+        .object({ date: z.iso.date(), amount: positiveAmount, interest: amount.optional() })
+        .refine(
+          (v) => !v.interest || BigInt(v.interest) < BigInt(v.amount),
+          'Проценты должны быть меньше платежа',
+        ),
+    )
+    .max(1200)
+    .default([])
+    .refine(
+      (rows) => new Set(rows.map((r) => r.date)).size === rows.length,
+      'Даты банка повторяются',
+    )
+    .transform((rows) => rows.sort((a, b) => a.date.localeCompare(b.date))),
+  interestMethod: z.enum(['monthly', 'actual365']).default('monthly'),
   title,
   kind: z.enum(['credit', 'mortgage', 'debt', 'receivable']),
   openingBalance: amount,
