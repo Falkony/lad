@@ -5,6 +5,7 @@ import { commandHistory, workspaceGuard } from '../db/schema'
 import type { Command } from './workspace'
 import type { CommandResult } from '../../shared/planning-types'
 import type { CommandHistoryPage } from '../../shared/command-history'
+import { syncBudgetHistory, validatePeriodSnapshots } from './periods'
 import { syncTransactionDetails } from './transaction-details'
 import { syncGoals } from './goals'
 import { syncCreditCards } from './credit'
@@ -20,7 +21,12 @@ export async function finishCommand(
   await syncGoals(db, revisionBefore)
   let base = BigInt(revisionBefore)
   if (command.op === 'workspace.restore')
-    for (const entry of command.backup.commandHistory)
+    for (const entry of [
+      ...command.backup.commandHistory,
+      ...command.backup.budgetHistory,
+      ...command.backup.reconciliations,
+      ...command.backup.periodClosures,
+    ])
       if (BigInt(entry.revision) > base) base = BigInt(entry.revision)
   const revision = (base + 1n).toString()
   const { op, ...payload } = command
@@ -41,6 +47,8 @@ export async function finishCommand(
       },
     }
   } else if (command.op === 'workspace.reset') data = {}
+  await validatePeriodSnapshots(db)
+  await syncBudgetHistory(db, revision, command.op)
   await db.update(workspaceGuard).set({ revision }).where(eq(workspaceGuard.id, 1))
   await db.insert(commandHistory).values({
     id: randomUUID(),

@@ -1,4 +1,5 @@
 export interface Budget {
+  categoryId?: string
   id: string
   month: string
   category: string

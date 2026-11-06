@@ -1,4 +1,5 @@
 import { goalFundingSchema, fundingOf, goalFundingIssues } from './goals'
+import { budgetChangeSchema, reconciliationSchema, periodClosureSchema } from './periods'
 import { categorySchema, withCategoryIds } from './categories'
 import { transactionSplitSchema, transactionDetailIssues } from './transaction-details'
 import { importRuleSchema, importMappingSchema } from './import-workflow'
@@ -27,7 +28,7 @@ import {
 type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-export const backupVersion = 9
+export const backupVersion = 10
 export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
@@ -97,9 +98,39 @@ export function upgradeBackup(input: unknown): unknown {
           if (isRow(p) && typeof p.transactionId === 'string')
             for (const id of rows(p.refundIds))
               if (typeof id === 'string') refunds.set(id, p.transactionId)
-  if (isRow(input) && [1, 2, 3, 4, 5, 6, 7, 8].includes(input.version as number) && isRow(upgraded))
+  if (
+    isRow(input) &&
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].includes(input.version as number) &&
+    isRow(upgraded)
+  )
     return withCategoryIds({
       ...upgraded,
+      reconciliations:
+        upgraded.reconciliations ??
+        rows(upgraded.commandHistory).flatMap((e) => {
+          if (
+            !isRow(e) ||
+            e.operation !== 'account.reconcile' ||
+            !isRow(e.payload) ||
+            !isRow(e.payload.data) ||
+            typeof e.createdAt !== 'string' ||
+            !Number.isFinite(Date.parse(e.createdAt))
+          )
+            return []
+          const payload = e.payload,
+            data = e.payload.data
+          if (!rows(upgraded.accounts).some((a) => isRow(a) && a.id === payload.id)) return []
+          return [
+            {
+              id: crypto.randomUUID(),
+              accountId: e.payload.id,
+              date: data.date,
+              balance: data.targetBalance,
+              revision: e.revision,
+              createdAt: new Date(e.createdAt).toISOString(),
+            },
+          ]
+        }),
       transactions: rows(upgraded.transactions).map((t) =>
         isRow(t) && refunds.has(t.id as string)
           ? { ...t, refundOf: refunds.get(t.id as string) }
@@ -131,7 +162,9 @@ export function upgradeBackup(input: unknown): unknown {
           : g,
       ),
       version: backupVersion,
-      commandHistory: [5, 6, 7, 8].includes(input.version as number) ? upgraded.commandHistory : [],
+      commandHistory: [5, 6, 7, 8, 9].includes(input.version as number)
+        ? upgraded.commandHistory
+        : [],
     })
   return upgraded
 }
@@ -255,6 +288,9 @@ const plan = planSchema.safeExtend({
 const backupObject = z
   .object({
     version: z.literal(backupVersion),
+    budgetHistory: z.array(budgetChangeSchema).max(100000).default([]),
+    reconciliations: z.array(reconciliationSchema).max(100000).default([]),
+    periodClosures: z.array(periodClosureSchema).max(10000).default([]),
     importRules: z
       .array(importRuleSchema.extend({ id: z.uuid() }))
       .max(10000)
@@ -335,6 +371,31 @@ const backupObject = z
   .superRefine((backup, ctx) => {
     for (const message of transactionDetailIssues(backup))
       ctx.addIssue({ code: 'custom', message, path: ['transactions'] })
+    for (const r of backup.reconciliations)
+      if (!backup.accounts.some((a) => a.id === r.accountId))
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Счёт сверки не найден',
+          path: ['reconciliations'],
+        })
+    const closureKeys = new Set<string>(),
+      closedMonths = new Set<string>()
+    for (const c of backup.periodClosures) {
+      const key = c.month + ':' + c.generation
+      if (
+        closureKeys.has(key) ||
+        (c.status === 'closed' && closedMonths.has(c.month)) ||
+        c.snapshot.month !== c.month ||
+        c.snapshot.sourceRevision !== c.sourceRevision
+      )
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Нарушена история закрытия периода',
+          path: ['periodClosures'],
+        })
+      closureKeys.add(key)
+      if (c.status === 'closed') closedMonths.add(c.month)
+    }
     const aliasKeys = new Set<string>(),
       allTx = [...backup.transactions, ...backup.deletedTransactions]
     for (const key of backup.importKeys) {
@@ -381,6 +442,9 @@ const backupObject = z
       'importTemplates',
       'importKeys',
       'importBatches',
+      'budgetHistory',
+      'reconciliations',
+      'periodClosures',
     ] as const) {
       const ids = new Set<string>()
       for (const row of backup[key]) {

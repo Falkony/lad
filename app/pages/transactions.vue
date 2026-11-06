@@ -15,6 +15,14 @@ const operationOpen = ref(false),
   accountId = ref('all'),
   month = ref(localDate().slice(0, 7)),
   page = ref(1)
+watch(
+  () => [route.query.month, route.query.category],
+  ([m, c]) => {
+    if (typeof m === 'string' && /^\d{4}-\d{2}$/.test(m)) month.value = m
+    if (typeof c === 'string') category.value = c
+  },
+  { immediate: true },
+)
 useWorkspacePeriod(month)
 const query = computed(() => ({
   page: page.value,

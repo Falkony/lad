@@ -22,6 +22,9 @@ import {
   importKeys,
   importRules,
   importTemplates,
+  budgetHistory,
+  reconciliations,
+  periodClosures,
 } from '../db/schema'
 import {
   accountSchema,
@@ -68,6 +71,12 @@ import {
   applyStatement,
 } from './import-workflow'
 import { detailCommands, isDetailCommand, executeDetailCommand } from './transaction-details'
+import {
+  periodCommands,
+  isPeriodCommand,
+  executePeriodCommand,
+  guardClosedPeriods,
+} from './periods'
 import { finishCommand } from './command-history'
 import type { CommandHistoryEntry } from '../../shared/command-history'
 
@@ -188,6 +197,9 @@ export async function readWorkspace(
         }
       }
       return {
+        budgetHistory: from ? [] : await db.select().from(budgetHistory),
+        reconciliations: from ? [] : await db.select().from(reconciliations),
+        periodClosures: from ? [] : await db.select().from(periodClosures),
         importBatches: batchRows,
         importRules: ruleRows,
         importTemplates: templateRows,
@@ -230,6 +242,7 @@ export const commandSchema = z.discriminatedUnion('op', [
   ...goalCommands,
   ...importCommands,
   ...detailCommands,
+  ...periodCommands,
   z.object({ op: z.literal('account.create'), data: accountSchema }),
   z.object({
     op: z.literal('account.update'),
@@ -337,6 +350,7 @@ async function executeWorkspaceCommand(command: Command) {
       .where(eq(workspaceGuard.id, 1))
       .for('update')
     const revisionBefore = guard!.revision
+    await guardClosedPeriods(db, command)
     await checkCategoryInput(db, command)
     if (command.op === 'demo.load') {
       await seedDemo(db)
@@ -377,6 +391,13 @@ async function executeWorkspaceCommand(command: Command) {
     let result: CommandResult = { ok: true }
     if (isCategoryCommand(command))
       return finishCommand(db, command, await executeCategoryCommand(db, command), revisionBefore)
+    if (isPeriodCommand(command))
+      return finishCommand(
+        db,
+        command,
+        await executePeriodCommand(db, command, revisionBefore),
+        revisionBefore,
+      )
     if (isImportWorkflowCommand(command))
       return finishCommand(db, command, await executeImportWorkflow(db, command), revisionBefore)
     if (isDetailCommand(command))
@@ -468,6 +489,14 @@ async function executeWorkspaceCommand(command: Command) {
             statusCode: 409,
             message: 'Остаток изменился. Обновите данные и повторите сверку.',
           })
+        await db.insert(reconciliations).values({
+          id: crypto.randomUUID(),
+          accountId: account.id,
+          date: command.data.date,
+          balance: command.data.targetBalance,
+          revision: (BigInt(revisionBefore) + 1n).toString(),
+          createdAt: new Date().toISOString(),
+        })
         const delta = BigInt(command.data.targetBalance) - BigInt(actual)
         if (delta !== 0n) {
           if ((delta < 0n ? -delta : delta) > 9000000000000000n)
@@ -660,6 +689,9 @@ async function executeWorkspaceCommand(command: Command) {
             message: 'Пространство изменилось после предпросмотра. Загрузите копию заново.',
           })
         const backup = command.backup
+        await db.delete(budgetHistory)
+        await db.delete(reconciliations)
+        await db.delete(periodClosures)
         await db.delete(importKeys)
         await db.delete(importBatches)
         await db.delete(importRules)
@@ -700,6 +732,11 @@ async function executeWorkspaceCommand(command: Command) {
         for (const rows of chunks(backup.importRules)) await db.insert(importRules).values(rows)
         for (const rows of chunks(backup.importTemplates))
           await db.insert(importTemplates).values(rows)
+        for (const rows of chunks(backup.budgetHistory)) await db.insert(budgetHistory).values(rows)
+        for (const rows of chunks(backup.reconciliations))
+          await db.insert(reconciliations).values(rows)
+        for (const rows of chunks(backup.periodClosures))
+          await db.insert(periodClosures).values(rows)
         for (const rows of chunks(backup.goals)) await db.insert(goals).values(rows)
         for (const rows of chunks(backup.events)) await db.insert(events).values(rows)
         for (const rows of chunks(backup.shopping)) await db.insert(shopping).values(rows)
@@ -718,6 +755,9 @@ async function executeWorkspaceCommand(command: Command) {
       }
       case 'workspace.reset': {
         await db.transaction(async (tx) => {
+          await tx.delete(budgetHistory)
+          await tx.delete(reconciliations)
+          await tx.delete(periodClosures)
           await tx.delete(importKeys)
           await tx.delete(importBatches)
           await tx.delete(importRules)

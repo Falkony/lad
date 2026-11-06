@@ -54,7 +54,7 @@ Host и совпадение Origin с Host и выставляет `Cache-Contr
 Подтверждение даты плана обязательства вызывает `afterPlanConfirm()`. Изменение связанной
 операции проверяется через `checkTransactionEdit()`. Не обходи эти связи отдельной записью в БД.
 
-Перед журналом `finishCommand()` вызывает `syncCreditCards()` и `syncGoals()` для лимитов, резервов и связанных планов. Журнал добавляется `finishCommand()` из `server/modules/command-history.ts` в той же транзакции, что данные и ревизия. Основной `readWorkspace()` не читает его; `readWorkspace(true)` включает историю в согласованный снимок для API экспорта и автокопий. Просмотр получает страницы через `GET /api/history`, UI — `app/pages/history.vue`. Подробности — в [command-history.md](command-history.md).
+Перед журналом `finishCommand()` вызывает `syncTransactionDetails()`, `syncCreditCards()` и `syncGoals()` для лимитов, резервов и связанных планов. Журнал добавляется `finishCommand()` из `server/modules/command-history.ts` в той же транзакции, что данные и ревизия. Изменения лимитов фиксируются `syncBudgetHistory()`, контрольные суммы итогов проверяются в той же транзакции. `guardClosedPeriods()` защищает закрытые периоды до изменения данных. Основной `readWorkspace()` не читает журнал; `readWorkspace(true)` включает историю в согласованный снимок для API экспорта и автокопий. Просмотр получает страницы через `GET /api/history`, UI — `app/pages/history.vue`. Подробности — в [command-history.md](command-history.md).
 
 ## Где менять поведение
 

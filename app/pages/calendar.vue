@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { civilDate, civilDateObject } from '../../shared/time-zone'
 import { money, toMinor, localDate, sumAmounts } from '../../shared/money'
 import { addDays, monthRange, projectPlans, isOpen } from '../../shared/planning'
 import type { CalendarEvent } from '../../shared/types'
@@ -6,7 +7,7 @@ import type { ProjectedOccurrence } from '../../shared/planning-types'
 import { balanceAt, forecast } from '../../shared/forecast'
 import { z } from 'zod'
 const { workspace: w, command, pending } = useWorkspace()
-const now = new Date(),
+const now = civilDateObject(localDate()),
   month = ref(new Date(now.getFullYear(), now.getMonth(), 1)),
   selected = ref(localDate()),
   open = ref(false),
@@ -22,6 +23,24 @@ const form = reactive({
 })
 const isPlan = computed(() => form.kind === 'payment' || form.kind === 'income')
 const route = useRoute()
+const initialMonth = civilDate(month.value).slice(0, 7)
+watch(
+  () => w.value.timeZone,
+  (zone, previous) => {
+    if (
+      zone &&
+      previous === undefined &&
+      !route.query.date &&
+      !route.query.title &&
+      civilDate(month.value).slice(0, 7) === initialMonth
+    ) {
+      const current = civilDateObject(localDate())
+      month.value = new Date(current.getFullYear(), current.getMonth(), 1)
+      selected.value = localDate()
+    }
+  },
+  { flush: 'post' },
+)
 const confirming = ref<ProjectedOccurrence | null>(null)
 type CalendarEntry = Omit<CalendarEvent, 'amount'> & {
   amount: string | null
@@ -30,10 +49,10 @@ type CalendarEntry = Omit<CalendarEvent, 'amount'> & {
 const calendarRange = computed(() => {
   const first = new Date(month.value)
   first.setDate(first.getDate() - ((first.getDay() + 6) % 7))
-  const from = localDate(first)
+  const from = civilDate(first)
   return { from, to: addDays(from, 41) }
 })
-useWorkspacePeriod(computed(() => localDate(month.value).slice(0, 7)))
+useWorkspacePeriod(computed(() => civilDate(month.value).slice(0, 7)))
 const calendarEvents = computed<CalendarEntry[]>(() => [
   ...w.value.events,
   ...projectPlans(w.value, calendarRange.value.from, calendarRange.value.to).map((p) => ({
@@ -48,7 +67,7 @@ const calendarEvents = computed<CalendarEntry[]>(() => [
   })),
 ])
 const monthlyPlans = computed(() => {
-  const range = monthRange(localDate(month.value).slice(0, 7))
+  const range = monthRange(civilDate(month.value).slice(0, 7))
   return projectPlans(w.value, range.from, range.to)
 })
 const openPlans = computed(() => monthlyPlans.value.filter(isOpen))
@@ -66,13 +85,13 @@ onMounted(() => {
     now.getMonth(),
     Math.min(dueDay, new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()),
   )
-  if (localDate(date) < localDate())
+  if (civilDate(date) < localDate())
     date = new Date(
       now.getFullYear(),
       now.getMonth() + 1,
       Math.min(dueDay, new Date(now.getFullYear(), now.getMonth() + 2, 0).getDate()),
     )
-  selected.value = localDate(date)
+  selected.value = civilDate(date)
   month.value = new Date(date.getFullYear(), date.getMonth(), 1)
   Object.assign(form, {
     title: route.query.title,
@@ -95,7 +114,7 @@ const days = computed(() => {
   return Array.from({ length: 42 }, (_, i) => {
     const d = new Date(first)
     d.setDate(d.getDate() + i)
-    const date = localDate(d)
+    const date = civilDate(d)
     return {
       date,
       day: d.getDate(),

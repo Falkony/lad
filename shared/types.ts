@@ -111,6 +111,9 @@ export interface ObligationEntry {
   createdAt: string
 }
 export interface Workspace {
+  budgetHistory?: import('./periods').BudgetChange[]
+  reconciliations?: import('./periods').Reconciliation[]
+  periodClosures?: import('./periods').PeriodClosure[]
   importBatches?: import('./import-workflow').ImportBatch[]
   importRules?: import('./import-workflow').ImportRule[]
   importTemplates?: import('./import-workflow').ImportTemplate[]

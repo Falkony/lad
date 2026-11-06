@@ -37,6 +37,9 @@ const sections = [
   { key: 'importKeys', label: 'Ключи сопоставления выписок' },
   { key: 'importRules', label: 'Правила категоризации' },
   { key: 'importTemplates', label: 'Шаблоны колонок' },
+  { key: 'budgetHistory', label: 'История лимитов' },
+  { key: 'reconciliations', label: 'Сверки остатков' },
+  { key: 'periodClosures', label: 'Версии закрытия месяцев' },
 ] as const
 async function updatePreview() {
   await refresh()

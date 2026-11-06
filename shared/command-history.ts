@@ -24,6 +24,9 @@ export interface CommandHistoryPage {
 }
 
 export const commandLabels: Record<string, string> = {
+  'period.close': 'Закрытие месяца',
+  'period.reopen': 'Повторное открытие месяца',
+  'period.prepare': 'Подготовка следующего месяца',
   'goal.allocate': 'Резервирование и изъятие накоплений',
   'goal.purchase': 'Покупка по цели',
   'goal.refund': 'Возврат покупки по цели',

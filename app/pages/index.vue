@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { civilDate, civilDateObject } from '../../shared/time-zone'
 import { accountBalance, money, sumAmounts, localDate } from '../../shared/money'
 import { monthPlan } from '../../shared/planning'
 import { projectPlans, overduePlans, isOpen, addDays } from '../../shared/planning'
@@ -7,9 +8,20 @@ import { forecast, untilNextIncome } from '../../shared/forecast'
 
 const { workspace: w, loading, pending, command } = useWorkspace()
 const operationOpen = ref(false)
-const current = new Date(),
+const current = civilDateObject(localDate()),
   month = ref(new Date(current.getFullYear(), current.getMonth(), 1))
-const monthKey = computed(() => localDate(month.value).slice(0, 7))
+const monthKey = computed(() => civilDate(month.value).slice(0, 7))
+const initialMonth = civilDate(month.value).slice(0, 7)
+watch(
+  () => w.value.timeZone,
+  (zone, previous) => {
+    if (zone && previous === undefined && civilDate(month.value).slice(0, 7) === initialMonth) {
+      const current = civilDateObject(localDate())
+      month.value = new Date(current.getFullYear(), current.getMonth(), 1)
+    }
+  },
+  { flush: 'post' },
+)
 useWorkspacePeriod(monthKey)
 const monthLabel = computed(() =>
   new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' })

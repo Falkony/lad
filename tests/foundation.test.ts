@@ -7,7 +7,7 @@ import { commandSchema, executeCommand, readWorkspace } from '../server/modules/
 import { migration, migrationThrough } from '../server/db/migration'
 import { foundationMigration } from '../server/db/foundation-migration'
 import { createBackup, backupSchema } from '../shared/backup'
-import { configureTimeZone, dateInTimeZone } from '../shared/time-zone'
+import { configureTimeZone, dateInTimeZone, civilDate, civilDateObject } from '../shared/time-zone'
 import { pastDate } from '../shared/schemas'
 import { localDate } from '../shared/money'
 const run = (input: unknown) => executeCommand(commandSchema.parse(input))
@@ -156,4 +156,12 @@ describe('foundation: category identities and workspace time', () => {
     configureTimeZone('Europe/Moscow')
     expect(pastDate().safeParse('2026-11-07').success).toBe(true)
   })
+})
+
+it('keeps calendar cells independent of instant timezone conversion', () => {
+  const cell = civilDateObject('2026-03-01')
+  for (const zone of ['Pacific/Honolulu', 'Pacific/Kiritimati', 'Europe/Moscow']) {
+    configureTimeZone(zone)
+    expect(civilDate(cell)).toBe('2026-03-01')
+  }
 })

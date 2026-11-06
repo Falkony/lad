@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { Account } from '../../shared/types'
 import { accountBalance, localDate, money, toSignedMinor } from '../../shared/money'
-const props = defineProps<{ account: Account }>()
+const props = defineProps<{ account: Account; initialDate?: string }>()
 const emit = defineEmits<{ saved: [] }>()
 const { workspace, command, pending } = useWorkspace()
-const date = ref(localDate()),
+const date = ref(props.initialDate || localDate()),
   target = ref(''),
   note = ref(''),
   error = ref('')

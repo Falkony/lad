@@ -95,6 +95,59 @@ export const accounts = pgTable('accounts', {
   archived: boolean('archived').notNull().default(false),
   inForecast: boolean('in_forecast').notNull().default(true),
 })
+export const budgetHistory = pgTable(
+  'budget_history',
+  {
+    id: text('id').primaryKey(),
+    month: text('month').notNull(),
+    categoryId: text('category_id').notNull(),
+    category: text('category').notNull(),
+    oldLimit: numeric('old_limit', { precision: 16, scale: 0 }),
+    newLimit: numeric('new_limit', { precision: 16, scale: 0 }),
+    revision: numeric('revision', { precision: 20, scale: 0 }).notNull(),
+    createdAt: text('created_at').notNull(),
+    operation: text('operation').notNull(),
+  },
+  (t) => [
+    uniqueIndex('budget_history_revision_month_category_id_key').on(
+      t.revision,
+      t.month,
+      t.categoryId,
+    ),
+  ],
+)
+export const reconciliations = pgTable(
+  'reconciliations',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id),
+    date: text('date').notNull(),
+    balance: money('balance'),
+    revision: numeric('revision', { precision: 20, scale: 0 }).notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('reconciliations_account_date').on(t.accountId, t.date)],
+)
+export const periodClosures = pgTable(
+  'period_closures',
+  {
+    id: text('id').primaryKey(),
+    month: text('month').notNull(),
+    generation: integer('generation').notNull(),
+    status: text('status').notNull(),
+    sourceRevision: text('source_revision').notNull(),
+    revision: text('revision').notNull(),
+    createdAt: text('created_at').notNull(),
+    reopenedAt: text('reopened_at'),
+    note: text('note').notNull(),
+    reopenNote: text('reopen_note').notNull(),
+    snapshot: jsonb('snapshot').$type<import('../../shared/periods').MonthReport>().notNull(),
+    sha256: text('sha256').notNull(),
+  },
+  (t) => [uniqueIndex('period_closures_month_generation_key').on(t.month, t.generation)],
+)
 export const transactions = pgTable(
   'transactions',
   {
