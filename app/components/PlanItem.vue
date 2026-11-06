@@ -22,6 +22,7 @@ const label = computed(() => {
     return income.value ? 'Связанный доход удалён' : 'Связанный расход удалён'
   if (overdue.value) return 'Срок прошёл'
   if (item.movedTo) return `Перенесено с ${day(item.dueDate)}`
+  if (item.date !== item.dueDate) return `Раньше: ${day(item.dueDate)} — выходной`
   if (income.value) return 'Ожидаемое поступление'
   return item.frequency === 'once' ? 'Разовый платёж' : 'Регулярный платёж'
 })

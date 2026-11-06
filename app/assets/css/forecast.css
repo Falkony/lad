@@ -8,9 +8,9 @@
   gap: 14px;
   padding: 18px 21px;
   margin-bottom: 20px;
-  border-color: #e6c9c2;
-  background: #fbf3f1;
-  color: #a3493e;
+  border-color: var(--c-bd-e6c9c2);
+  background: var(--c-bg-fbf3f1);
+  color: var(--c-fg-a3493e);
 }
 .forecast-alert strong {
   display: block;
@@ -21,7 +21,7 @@
   margin: 6px 0 0;
   font-size: 11px;
   line-height: 1.6;
-  color: #8d5a52;
+  color: var(--c-fg-8d5a52);
 }
 .forecast-grid {
   display: grid;
@@ -50,32 +50,32 @@
 }
 .forecast-line {
   fill: none;
-  stroke: var(--green);
+  stroke: var(--green-text);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
   stroke-linejoin: round;
 }
 .forecast-zero {
-  stroke: #a3493e;
+  stroke: var(--c-gr-a3493e);
   stroke-dasharray: 4 4;
   vector-effect: non-scaling-stroke;
 }
 .forecast-tick {
-  stroke: #c9b48a;
+  stroke: var(--c-gr-c9b48a);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 .forecast-tick.income {
-  stroke: #638652;
+  stroke: var(--c-gr-638652);
 }
 .forecast-min {
-  fill: #fff;
-  stroke: var(--green);
+  fill: var(--c-gr-ffffff);
+  stroke: var(--green-text);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 .forecast-min.negative {
-  stroke: #a3493e;
+  stroke: var(--c-gr-a3493e);
 }
 .forecast-chart figcaption {
   display: flex;
@@ -192,7 +192,7 @@
   color: var(--muted);
 }
 .forecast-row.muted-row {
-  color: #6f7a69;
+  color: var(--c-fg-6f7a69);
 }
 .forecast-row.muted-row em {
   color: var(--muted);
@@ -262,7 +262,7 @@
   font-size: 12px;
 }
 .forecast-flows dt {
-  color: #6f7a69;
+  color: var(--c-fg-6f7a69);
 }
 .forecast-flows dd {
   margin: 0;
@@ -310,7 +310,7 @@
   width: 16px;
   height: 16px;
   margin: 1px 0 0;
-  accent-color: var(--green);
+  accent-color: var(--green-text);
   flex: none;
 }
 .checkbox-row span {
@@ -321,7 +321,7 @@
   font-size: 12px;
 }
 .checkbox-row small {
-  color: #929d86;
+  color: var(--c-fg-929d86);
   font-size: 10px;
   line-height: 1.6;
 }
@@ -331,25 +331,25 @@
 }
 .calendar-toolbar-actions .button.active {
   background: var(--green-light);
-  border-color: #c9d6c0;
-  color: var(--green);
+  border-color: var(--c-bd-c9d6c0);
+  color: var(--green-text);
 }
 .calendar-balance {
   display: block;
   margin: 2px 0 3px;
   font-size: 9px;
   font-weight: 600;
-  color: #6f7a69;
+  color: var(--c-fg-6f7a69);
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .calendar-balance.expected {
-  color: var(--green);
+  color: var(--green-text);
 }
 .calendar-balance.negative {
-  color: #a3493e;
+  color: var(--c-fg-a3493e);
 }
 .calendar-day-balance {
   margin: 6px 0 0;

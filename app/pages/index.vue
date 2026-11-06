@@ -76,7 +76,7 @@ const donutStyle = computed(() => {
             return `${x.color} ${start}% ${offset}%`
           })
           .join(',')})`
-      : '#eaece5',
+      : 'var(--chart-track)',
   }
 })
 const chart = computed(() => {
@@ -245,22 +245,22 @@ function progress(saved: string, target: string) {
           >
             <defs>
               <linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stop-color="#789b75" stop-opacity=".23" />
-                <stop offset="100%" stop-color="#789b75" stop-opacity="0" />
+                <stop offset="0%" style="stop-color: var(--chart-line)" stop-opacity=".23" />
+                <stop offset="100%" style="stop-color: var(--chart-line)" stop-opacity="0" />
               </linearGradient>
             </defs>
             <path
               v-for="y in [20, 82, 145]"
               :key="y"
               :d="`M0 ${y}H600`"
-              stroke="#e8ebe4"
+              style="stroke: var(--line)"
               stroke-dasharray="3 5"
             />
             <polygon :points="chart.area" fill="url(#chart-fill)" />
             <polyline
               :points="chart.points"
               fill="none"
-              stroke="#60815b"
+              style="stroke: var(--chart-line)"
               stroke-width="2.8"
               stroke-linecap="round"
               stroke-linejoin="round"

@@ -5,10 +5,12 @@ export default defineNuxtConfig({
   nitro: { esbuild: { options: { target: 'es2022' } } },
   vite: { build: { target: 'es2022' } },
   css: [
+    '~/assets/css/theme-tokens.css',
     '~/assets/css/main.css',
     '~/assets/css/iteration-two.css',
     '~/assets/css/planning.css',
     '~/assets/css/forecast.css',
+    '~/assets/css/theme.css',
   ],
   ssr: false,
   devtools: { enabled: false },

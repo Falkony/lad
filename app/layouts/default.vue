@@ -1,5 +1,11 @@
 <script setup lang="ts">
 const route = useRoute()
+// The system theme by default; the header button stores an explicit choice on this device.
+const colorMode = useColorMode()
+const dark = computed(() => colorMode.value === 'dark')
+function toggleTheme() {
+  colorMode.preference = dark.value ? 'light' : 'dark'
+}
 const { workspace, command, notify, error, refresh } = useWorkspace()
 const { downloadBackup, exporting } = useBackup()
 const menu = ref(false)
@@ -127,6 +133,13 @@ async function reset() {
           ><button v-if="!populated" class="demo-button" @click="loadDemo">
             <AppIcon name="sparkles" :size="15" />Открыть демо</button
           ><span v-else-if="workspace.isDemo" class="demo-badge">Демо-данные</span
+          ><button
+            class="icon-button theme-toggle"
+            :aria-label="dark ? 'Включить светлую тему' : 'Включить тёмную тему'"
+            :title="dark ? 'Светлая тема' : 'Тёмная тема'"
+            @click="toggleTheme"
+          >
+            <AppIcon :name="dark ? 'sun' : 'moon'" :size="18" /></button
           ><NuxtLink
             to="/calendar"
             class="icon-button notifications"

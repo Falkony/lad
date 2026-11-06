@@ -14,8 +14,8 @@
   gap: 16px;
 }
 .managed-account-card {
-  border: 1px solid #e0e7d8;
-  background: #fff;
+  border: 1px solid var(--c-bd-e0e7d8);
+  background: var(--c-bg-ffffff);
   border-radius: 13px;
   padding: 18px;
   min-width: 0;
@@ -28,7 +28,7 @@
 }
 .account-bank {
   font-size: 10px;
-  color: #87967a;
+  color: var(--c-fg-87967a);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -51,17 +51,17 @@
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  border-top: 1px solid #edf1e7;
+  border-top: 1px solid var(--c-bd-edf1e7);
   margin-top: 19px;
   padding-top: 12px;
 }
 .managed-account-footer > span {
   font-size: 10px;
-  color: #9aa88b;
+  color: var(--c-fg-9aa88b);
 }
 .account-edit-button {
   font-size: 11px;
-  color: #547641;
+  color: var(--c-fg-547641);
 }
 .account-menu {
   position: relative;
@@ -79,23 +79,23 @@
   cursor: pointer;
   list-style: none;
   border-radius: 6px;
-  color: #859a73;
+  color: var(--c-fg-859a73);
 }
 .account-menu summary::-webkit-details-marker {
   display: none;
 }
 .account-menu summary:hover,
 .account-menu[open] summary {
-  background: #eff4e8;
+  background: var(--c-bg-eff4e8);
 }
 .account-menu-items {
   position: absolute;
   right: 0;
   top: 34px;
   width: 220px;
-  background: #fff;
-  box-shadow: 0 7px 25px #3245221c;
-  border: 1px solid #dce6d0;
+  background: var(--c-bg-ffffff);
+  box-shadow: 0 7px 25px var(--c-sh-3245221c);
+  border: 1px solid var(--c-bd-dce6d0);
   border-radius: 10px;
   padding: 5px;
 }
@@ -114,7 +114,7 @@
 }
 .account-menu-items > button:hover,
 .account-menu-items > a:hover {
-  background: #f0f5e8;
+  background: var(--c-bg-f0f5e8);
 }
 .account-menu-items > button:disabled {
   cursor: not-allowed;
@@ -123,19 +123,19 @@
   display: flex;
   gap: 5px;
   margin: 0 0 19px;
-  border-bottom: 1px solid #e4eadb;
+  border-bottom: 1px solid var(--c-bd-e4eadb);
 }
 .account-tabs button {
   padding: 12px 15px;
-  color: #91a17e;
+  color: var(--c-fg-91a17e);
   font-size: 12px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
 }
 .account-tabs button.selected {
-  color: #3e6330;
-  border-bottom-color: #7c9b62;
+  color: var(--c-fg-3e6330);
+  border-bottom-color: var(--c-bd-7c9b62);
 }
 .account-archive-note {
   margin-top: 13px;
@@ -153,7 +153,7 @@
 }
 .color-picker legend {
   font-size: 11px;
-  color: #78866a;
+  color: var(--c-fg-78866a);
   margin-bottom: 10px;
 }
 .color-picker label {
@@ -167,28 +167,28 @@
   width: 13px;
   height: 13px;
   padding: 0;
-  accent-color: #547641;
+  accent-color: var(--c-fg-547641);
 }
 .color-picker span {
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  background: #9db986;
+  background: var(--c-bg-9db986);
 }
 .color-picker span.blue {
-  background: #9db6c4;
+  background: var(--c-bg-9db6c4);
 }
 .color-picker span.sand {
-  background: #d4bd93;
+  background: var(--c-bg-d4bd93);
 }
 .opening-balance-details {
-  border: 1px solid #e1e9d8;
+  border: 1px solid var(--c-bd-e1e9d8);
   padding: 13px;
   border-radius: 8px;
 }
 .opening-balance-details summary {
   font-size: 11px;
-  color: #7c916b;
+  color: var(--c-fg-7c916b);
   cursor: pointer;
 }
 .opening-balance-details[open] summary {
@@ -205,12 +205,12 @@
   gap: 12px;
   padding: 15px;
   border-radius: 9px;
-  background: #f0f5e8;
+  background: var(--c-bg-f0f5e8);
 }
 .reconcile-comparison span,
 .reconcile-delta span {
   font-size: 11px;
-  color: #879b75;
+  color: var(--c-fg-879b75);
 }
 .reconcile-comparison strong,
 .reconcile-delta strong {
@@ -219,22 +219,22 @@
   white-space: nowrap;
 }
 .reconcile-delta {
-  border: 1px solid #dce7d0;
-  background: #fff;
+  border: 1px solid var(--c-bd-dce7d0);
+  background: var(--c-bg-ffffff);
 }
 .transaction-select {
   width: 15px;
   height: 15px;
   padding: 0;
   flex-shrink: 0;
-  accent-color: #547641;
+  accent-color: var(--c-fg-547641);
 }
 .transaction-edit {
-  color: #7a9267;
+  color: var(--c-fg-7a9267);
 }
 .adjustment-label {
-  color: #a18a64;
-  background: #f6efe2;
+  color: var(--c-fg-a18a64);
+  background: var(--c-bg-f6efe2);
   padding: 4px 6px;
   border-radius: 4px;
   font-size: 8px;
@@ -244,13 +244,13 @@
   align-items: center;
   gap: 13px;
   padding: 13px 20px;
-  background: #f7faf2;
-  border-bottom: 1px solid #e5ecd9;
+  background: var(--c-bg-f7faf2);
+  border-bottom: 1px solid var(--c-bd-e5ecd9);
   flex-wrap: wrap;
 }
 .bulk-toolbar > span {
   font-size: 10px;
-  color: #7f946d;
+  color: var(--c-fg-7f946d);
 }
 .bulk-toolbar select {
   width: auto;
@@ -261,8 +261,8 @@
 .trash-notice {
   padding: 14px 20px;
   font-size: 11px;
-  color: #94a282;
-  background: #f6f9f0;
+  color: var(--c-fg-94a282);
+  background: var(--c-bg-f6f9f0);
 }
 .backup-layout {
   display: grid;
@@ -277,7 +277,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  color: #8a9f75;
+  color: var(--c-fg-8a9f75);
 }
 .backup-body > .form-error,
 .backup-body > .form-hint {
@@ -292,11 +292,11 @@
 .backup-file-meta strong {
   font-size: 13px;
   font-weight: 500;
-  color: #5b7f43;
+  color: var(--c-fg-5b7f43);
 }
 .backup-file-meta span {
   font-size: 10px;
-  color: #99a78a;
+  color: var(--c-fg-99a78a);
 }
 .backup-preview-table {
   width: 100%;
@@ -306,13 +306,13 @@
 }
 .backup-preview-table th {
   text-align: left;
-  color: #9aab89;
+  color: var(--c-fg-9aab89);
   font-size: 10px;
   font-weight: 400;
   padding: 10px 0;
 }
 .backup-preview-table td {
-  border-top: 1px solid #eaf0e2;
+  border-top: 1px solid var(--c-bd-eaf0e2);
   padding: 10px 0;
 }
 .backup-preview-table th:not(:first-child),
@@ -321,7 +321,7 @@
 }
 .backup-explanation {
   padding: 15px 5px;
-  color: #8fa57c;
+  color: var(--c-fg-8fa57c);
 }
 .backup-explanation h2 {
   margin: 19px 0 12px;
@@ -331,19 +331,19 @@
   margin-bottom: 15px;
   font-size: 12px;
   line-height: 1.85;
-  color: #92a182;
+  color: var(--c-fg-92a182);
 }
 .restore-notice {
-  border: 1px solid #e8dcc4;
+  border: 1px solid var(--c-bd-e8dcc4);
   border-radius: 8px;
-  background: #fcf8ef;
-  color: #a08b64;
+  background: var(--c-bg-fcf8ef);
+  color: var(--c-fg-a08b64);
   font-size: 11px;
   line-height: 1.85;
   padding: 14px;
 }
 .backup-stale {
-  background: #f7f3e6;
+  background: var(--c-bg-f7f3e6);
   padding: 14px;
   margin-bottom: 20px;
   border-radius: 8px;
@@ -351,7 +351,7 @@
 .backup-stale p {
   font-size: 11px;
   line-height: 1.8;
-  color: #9c8c67;
+  color: var(--c-fg-9c8c67);
   margin-bottom: 12px;
 }
 @media (max-height: 850px) {

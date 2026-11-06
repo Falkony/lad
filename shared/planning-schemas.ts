@@ -17,10 +17,25 @@ const planShape = {
   startDate: z.iso.date(),
   endDate: z.iso.date().nullable().default(null),
   note: z.string().trim().max(1000).default(''),
+  monthDays: z
+    .array(z.number().int().min(1).max(31))
+    .max(4)
+    .default([])
+    .transform((days) => [...days].sort((a, b) => a - b)),
+  holidayShift: z.enum(['none', 'before']).default('none'),
 }
-type PlanShape = { frequency: string; interval: number; startDate: string; endDate: string | null }
+type PlanShape = {
+  frequency: string
+  interval: number
+  startDate: string
+  endDate: string | null
+  monthDays: number[]
+}
 const validPeriod = (v: PlanShape) => !v.endDate || v.endDate >= v.startDate
 const validOnce = (v: PlanShape) => v.frequency !== 'once' || (v.interval === 1 && !v.endDate)
+const validDays = (v: PlanShape) =>
+  !v.monthDays.length ||
+  (v.frequency === 'monthly' && new Set(v.monthDays).size === v.monthDays.length)
 export const planSchema = z
   .object(planShape)
   .refine(validPeriod, {
@@ -31,6 +46,10 @@ export const planSchema = z
     message: 'У разового плана нет повторов и даты окончания',
     path: ['frequency'],
   })
+  .refine(validDays, {
+    message: 'Несколько дней выплаты бывают только у ежемесячного плана, без повторов',
+    path: ['monthDays'],
+  })
 export const planVersionSchema = z
   .object({
     ...planShape,
@@ -40,7 +59,8 @@ export const planVersionSchema = z
     validTo: z.iso.date().nullable(),
   })
   .refine(
-    (v) => validPeriod(v) && validOnce(v) && (!v.validTo || v.validTo >= v.validFrom),
+    (v) =>
+      validPeriod(v) && validOnce(v) && validDays(v) && (!v.validTo || v.validTo >= v.validFrom),
     'Неверный период плана',
   )
 export const occurrenceSchema = z

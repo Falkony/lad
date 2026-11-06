@@ -7,6 +7,7 @@ export interface Budget {
 export type PlanDirection = 'expense' | 'income'
 export type PlanFrequency = 'once' | 'monthly' | 'weekly' | 'yearly'
 export type PlanSource = 'manual' | 'obligation' | 'goal'
+export type HolidayShift = 'none' | 'before'
 export interface PlanFields {
   title: string
   category: string
@@ -17,6 +18,10 @@ export interface PlanFields {
   startDate: string
   endDate: string | null
   note: string
+  /** Days of the month for a monthly plan (salary on the 5th and the 20th); empty: the day of `startDate`. */
+  monthDays: number[]
+  /** `before`: a date on a weekend or holiday moves to the previous working day (Labour Code, art. 136). */
+  holidayShift: HolidayShift
 }
 /** A planned income or payment: one-off (`frequency: 'once'`) or recurring. */
 export interface Plan extends PlanFields {

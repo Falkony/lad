@@ -6,6 +6,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { commandSchema, executeCommand, readWorkspace } from '../server/modules/workspace'
 import { migration } from '../server/db/migration'
 import { unifiedPlanMigration } from '../server/db/unified-plan-migration'
+import { payDaysMigration } from '../server/db/pay-days-migration'
 import { backupSchema, createBackup } from '../shared/backup'
 import { budgetRows, monthPlan, overduePlans, projectPlans } from '../shared/planning'
 import * as money from '../shared/money'
@@ -199,7 +200,7 @@ describe('migration and backups', () => {
   it('moves calendar payments into one-off plans and keeps recurring history', async () => {
     const db = new PGlite()
     try {
-      await db.exec(migration.replace(unifiedPlanMigration, ''))
+      await db.exec(migration.replace(unifiedPlanMigration, '').replace(payDaysMigration, ''))
       await db.exec(`
         INSERT INTO accounts (id,name,kind,opening_balance,color) VALUES ('a','Счёт','card',0,'green');
         INSERT INTO transactions (id,kind,amount,account_id,category,description,date) VALUES ('t','expense',500,'a','Дом','','2026-01-05');

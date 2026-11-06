@@ -113,6 +113,8 @@ async function addSchedule(
     startDate: fields.startDate,
     endDate: fields.endDate,
     note: fields.note,
+    monthDays: fields.monthDays,
+    holidayShift: fields.holidayShift,
     validFrom,
     validTo: null,
   })
@@ -129,23 +131,23 @@ async function resolveOccurrence(db: WriteTransaction, planId: string, dueDate: 
   ])
   const plan = planRows[0] as Plan | undefined
   if (!plan) throw createError({ statusCode: 404, message: 'План не найден' })
-  const item = projectOccurrence(
-    {
-      plans: [plan],
-      planVersions: versions as PlanVersion[],
-      planOccurrences: occurrences as PlanOccurrence[],
-      transactions: history.filter((t) => !t.deletedAt) as Transaction[],
-      deletedTransactions: history.filter((t) => t.deletedAt) as Transaction[],
-    },
-    planId,
-    dueDate,
-  )
+  const workspace = {
+    plans: [plan],
+    planVersions: versions as PlanVersion[],
+    planOccurrences: occurrences as PlanOccurrence[],
+    transactions: history.filter((t) => !t.deletedAt) as Transaction[],
+    deletedTransactions: history.filter((t) => t.deletedAt) as Transaction[],
+  }
+  const item = projectOccurrence(workspace, planId, dueDate)
+  // The date by the schedule alone: the original date or the working day before a day off.
+  const scheduled =
+    projectOccurrence({ ...workspace, planOccurrences: [] }, planId, dueDate)?.date || dueDate
   if (!item)
     throw createError({
       statusCode: 404,
       message: 'Эта дата больше не запланирована. Обновите календарь.',
     })
-  return { plan, item, existing: occurrences[0], history }
+  return { plan, item, scheduled, existing: occurrences[0], history }
 }
 export async function executePlanningCommand(
   db: WriteTransaction,
@@ -293,7 +295,7 @@ export async function executePlanningCommand(
     case 'occurrence.skip':
     case 'occurrence.unskip':
     case 'occurrence.adjust': {
-      const { plan, item, existing, history } = await resolveOccurrence(
+      const { plan, item, scheduled, existing, history } = await resolveOccurrence(
         db,
         command.planId,
         command.dueDate,
@@ -334,7 +336,7 @@ export async function executePlanningCommand(
             statusCode: 400,
             message: 'Изменить можно только дату, которая ещё ждёт подтверждения',
           })
-        const movedTo = command.date === item.dueDate ? null : command.date
+        const movedTo = command.date === scheduled ? null : command.date
         await db
           .insert(planOccurrences)
           .values({

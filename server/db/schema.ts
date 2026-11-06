@@ -104,6 +104,8 @@ const planFields = () => ({
   startDate: text('start_date').notNull(),
   endDate: text('end_date'),
   note: text('note').notNull(),
+  monthDays: integer('month_days').array().notNull().default([]),
+  holidayShift: text('holiday_shift').notNull().default('none'),
 })
 // One model for every planned income and payment: one-off or recurring (migration 6).
 export const plans = pgTable('plans', {

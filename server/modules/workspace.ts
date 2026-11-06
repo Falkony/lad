@@ -34,6 +34,7 @@ import type { Account, Transaction } from '../../shared/types'
 import type { Workspace } from '../../shared/types'
 import type { CommandResult } from '../../shared/planning-types'
 import { planningCommands, isPlanningCommand, executePlanningCommand } from './planning'
+import { planSchema } from '../../shared/planning-schemas'
 
 /** Throws 404 when an update/delete touched nothing, so a stale UI does not report success. */
 export function found<T>(rows: T[], message: string): T[] {
@@ -827,13 +828,15 @@ async function seedDemo() {
       },
       {
         direction: 'income' as const,
-        title: 'Зарплата',
+        title: 'Аванс и зарплата',
         category: 'Зарплата',
-        amount: '18500000',
+        amount: '9250000',
         accountId: main,
         frequency: 'monthly' as const,
-        startDate: day(26),
+        startDate: day(1),
         note: '',
+        monthDays: [5, 20],
+        holidayShift: 'before' as const,
       },
     ]
     for (const { direction, ...plan } of demoPlans)
@@ -842,7 +845,7 @@ async function seedDemo() {
         {
           op: 'plan.save',
           direction,
-          data: { ...plan, interval: 1, endDate: null },
+          data: planSchema.parse({ ...plan, interval: 1, endDate: null }),
         },
         '0',
       )

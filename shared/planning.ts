@@ -1,4 +1,5 @@
 import type { Workspace, Transaction } from './types'
+import { previousWorkingDay } from './workdays'
 import type { PlanVersion, ProjectedOccurrence, PlanDirection } from './planning-types'
 
 const dayMs = 86400000
@@ -46,12 +47,14 @@ export function recurringDates(version: PlanVersion, from: string, to: string): 
     const [lowYear, lowMonth] = low.split('-').map(Number) as [number, number]
     const distance = (lowYear - year) * 12 + lowMonth - month
     let index = Math.max(0, Math.floor(distance / version.interval))
+    // Several pay days a month (the 5th and the 20th) or the day of the first date.
+    const days = version.monthDays?.length ? version.monthDays : [day]
     for (;;) {
       const nextMonth = shiftMonth(version.startDate.slice(0, 7), index * version.interval)
       if (`${nextMonth}-01` > high) break
       const [nextYear, nextNumber] = nextMonth.split('-').map(Number) as [number, number]
-      const date = clampedDate(nextYear, nextNumber, day)
-      if (date >= low && date <= high) output.push(date)
+      const dates = new Set(days.map((d) => clampedDate(nextYear, nextNumber, d)))
+      for (const date of [...dates].sort()) if (date >= low && date <= high) output.push(date)
       index++
     }
   } else {
@@ -71,6 +74,8 @@ export type PlanningWorkspace = Pick<
   Workspace,
   'plans' | 'planVersions' | 'planOccurrences' | 'transactions' | 'deletedTransactions'
 >
+// The longest stretch of days off (New Year holidays) a pay day can move back over.
+const shiftWindow = 16
 type Selection = { from: string; to: string } | { planId: string; dueDate: string }
 function project(workspace: PlanningWorkspace, selection: Selection): ProjectedOccurrence[] {
   const plans = new Map(workspace.plans.map((p) => [p.id, p]))
@@ -79,18 +84,23 @@ function project(workspace: PlanningWorkspace, selection: Selection): ProjectedO
   // decision record, and the effective date is filtered at the end.
   const from = byDate ? selection.from : selection.dueDate
   const to = byDate ? selection.to : selection.dueDate
+  // A date shortly after the range can move back into it when it falls on a day off.
+  const scheduleTo = byDate ? addDays(to, shiftWindow) : to
   const result = new Map<string, ProjectedOccurrence>()
+  const shifted = new Map<string, string>()
   for (const version of workspace.planVersions) {
     if (!byDate && version.planId !== selection.planId) continue
     const plan = plans.get(version.planId)
     if (!plan) continue
-    for (const dueDate of recurringDates(version, from, to)) {
+    for (const dueDate of recurringDates(version, from, scheduleTo)) {
       const key = `${version.planId}:${dueDate}`
+      const date = version.holidayShift === 'before' ? previousWorkingDay(dueDate) : dueDate
+      if (date !== dueDate) shifted.set(key, date)
       result.set(key, {
         id: key,
         planId: version.planId,
         dueDate,
-        date: dueDate,
+        date,
         title: version.title,
         category: version.category,
         amount: version.amount,
@@ -113,17 +123,18 @@ function project(workspace: PlanningWorkspace, selection: Selection): ProjectedO
     const plan = plans.get(occurrence.planId)
     if (!plan) continue
     const relevant = byDate
-      ? (occurrence.dueDate >= from && occurrence.dueDate <= to) ||
+      ? (occurrence.dueDate >= from && occurrence.dueDate <= scheduleTo) ||
         (!!occurrence.movedTo && occurrence.movedTo >= from && occurrence.movedTo <= to)
       : occurrence.planId === selection.planId && occurrence.dueDate === selection.dueDate
     if (!relevant) continue
     const transaction = occurrence.transactionId
       ? transactions.get(occurrence.transactionId)
       : undefined
-    result.set(`${occurrence.planId}:${occurrence.dueDate}`, {
+    const key = `${occurrence.planId}:${occurrence.dueDate}`
+    result.set(key, {
       ...occurrence,
-      id: `${occurrence.planId}:${occurrence.dueDate}`,
-      date: occurrence.movedTo || occurrence.dueDate,
+      id: key,
+      date: occurrence.movedTo || shifted.get(key) || occurrence.dueDate,
       direction: plan.direction,
       frequency: plan.frequency,
       status:
@@ -216,8 +227,12 @@ export function budgetRows(workspace: Workspace, month: string) {
     })
     .sort((a, b) => a.category.localeCompare(b.category, 'ru'))
 }
-export function frequencyLabel(frequency: string, interval: number) {
+export function frequencyLabel(frequency: string, interval: number, monthDays: number[] = []) {
   if (frequency === 'once') return 'Один раз'
+  if (frequency === 'monthly' && monthDays.length > 1) {
+    const days = monthDays.slice(0, -1).join(', ') + ' и ' + monthDays.at(-1)
+    return `${interval === 1 ? 'Каждый месяц' : `Каждые ${interval} мес.`}, ${days} числа`
+  }
   if (frequency === 'weekly') return interval === 1 ? 'Каждую неделю' : `Каждые ${interval} нед.`
   if (frequency === 'yearly') return interval === 1 ? 'Каждый год' : `Каждые ${interval} лет`
   return interval === 1 ? 'Каждый месяц' : `Каждые ${interval} мес.`

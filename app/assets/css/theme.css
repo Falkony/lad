@@ -1,0 +1,35 @@
+/* Light and dark themes. The `dark` class on <html> comes from the colour mode of Nuxt UI:
+ * the system setting by default, or the user's choice from the header. Literal colours of the
+ * stylesheets are tokens in theme-tokens.css; this file holds the semantic palette. */
+:root {
+  /* The brand green as text and lines; the fill of buttons stays `--green`. */
+  --green-text: var(--green);
+  --chart-line: #60815b;
+  --chart-track: #eaece5;
+}
+html.dark {
+  color-scheme: dark;
+  --ink: #e1e6dd;
+  --muted: #8d978a;
+  --green: #3f6e54;
+  --green-text: #8fc0a0;
+  --chart-line: #8fc0a0;
+  --chart-track: #29302b;
+  --green-light: #1f2c25;
+  --paper: #0f1311;
+  --line: #29302b;
+  /* Nuxt UI components: dialogs, menus, toasts. */
+  --ui-primary: #6fa385;
+  --ui-bg: #1a201c;
+  --ui-bg-elevated: #222923;
+  --ui-bg-muted: #1f2621;
+  --ui-bg-accented: #29312b;
+  --ui-text: #e1e6dd;
+  --ui-text-highlighted: #f1f4ee;
+  --ui-text-muted: #9aa496;
+  --ui-text-dimmed: #7d8679;
+  --ui-text-toned: #c3cbbf;
+  --ui-border: #29302b;
+  --ui-border-muted: #232a25;
+  --ui-border-accented: #343c36;
+}

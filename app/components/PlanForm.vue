@@ -25,6 +25,9 @@ const form = reactive({
     startDate: localDate(),
     endDate: '',
     note: '',
+    // "5, 20": several pay days a month; empty: the day of the first date.
+    monthDays: '',
+    workdays: false,
   }),
   error = ref('')
 const once = computed(() => form.frequency === 'once')
@@ -40,6 +43,8 @@ watch(
             amount: toMajor(plan.amount),
             accountId: plan.accountId || '',
             endDate: plan.endDate || '',
+            monthDays: plan.monthDays.join(', '),
+            workdays: plan.holidayShift === 'before',
           }
         : {
             title: initial?.title || '',
@@ -51,6 +56,8 @@ watch(
             startDate: initial?.startDate || localDate(),
             endDate: '',
             note: '',
+            monthDays: '',
+            workdays: false,
           },
     )
     error.value = ''
@@ -82,16 +89,23 @@ const frequencies = computed(() =>
     { value: 'yearly', label: 'По годам' },
   ].filter((f) => !props.plan || (props.plan.frequency === 'once') === (f.value === 'once')),
 )
+const monthly = computed(() => form.frequency === 'monthly')
+const parsedDays = computed(() => [...new Set((form.monthDays.match(/\d+/g) || []).map(Number))])
 async function save() {
   error.value = ''
   try {
+    if (monthly.value && parsedDays.value.some((d) => d < 1 || d > 31))
+      throw new Error('Дни месяца — числа от 1 до 31')
+    const { monthDays: _days, workdays, ...fields } = form
     await command(
       {
         op: 'plan.save',
         ...(props.plan ? { id: props.plan.id } : {}),
         direction: direction.value,
         data: {
-          ...form,
+          ...fields,
+          monthDays: monthly.value && parsedDays.value.length ? parsedDays.value : [],
+          holidayShift: !once.value && direction.value === 'income' && workdays ? 'before' : 'none',
           amount: toMinor(form.amount),
           accountId: form.accountId || null,
           interval: once.value ? 1 : form.interval,
@@ -187,6 +201,25 @@ async function save() {
         >Последний день<input v-model="form.endDate" type="date" :min="form.startDate"
       /></label>
     </div>
+    <label v-if="monthly"
+      >Дни выплаты в месяце<input
+        v-model="form.monthDays"
+        inputmode="numeric"
+        maxlength="20"
+        placeholder="Например, 5, 20 — или пусто: день первой даты"
+      /><span class="form-hint"
+        >Укажите до четырёх дней через запятую, если деньги приходят несколько раз в месяц: аванс и
+        зарплата.</span
+      ></label
+    >
+    <label v-if="!once && direction === 'income'" class="checkbox-row"
+      ><input v-model="form.workdays" type="checkbox" /><span
+        >Работаю по графику 5/2<small
+          >Если день выплаты выпадает на выходной или праздник, зарплата приходит накануне — в
+          предыдущий рабочий день (ТК РФ, ст. 136). При сменном графике оставьте выключенным.</small
+        ></span
+      ></label
+    >
     <label
       >Заметка<textarea
         v-model="form.note"
@@ -199,7 +232,7 @@ async function save() {
       {{
         once
           ? 'Разовый план появится в календаре и прогнозе на выбранную дату. Операция записывается только после подтверждения.'
-          : 'День месяца берётся из первой даты; если такого дня нет, используется последний день месяца. Изменения действуют с сегодняшнего дня: прошлые даты и подтверждения сохраняются, а перенос и изменение суммы будущих дат сбрасываются.'
+          : 'Если дни выплаты не указаны, день месяца берётся из первой даты; если такого дня нет, используется последний день месяца. Изменения действуют с сегодняшнего дня: прошлые даты и подтверждения сохраняются, а перенос и изменение суммы будущих дат сбрасываются.'
       }}
     </p>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>

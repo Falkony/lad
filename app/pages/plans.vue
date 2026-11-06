@@ -176,7 +176,8 @@ function status(plan: Plan) {
             <h3>{{ plan.title }}</h3>
             <span
               >{{ plan.direction === 'income' ? 'Поступление' : 'Платёж' }} · {{ plan.category }} ·
-              {{ frequencyLabel(plan.frequency, plan.interval) }}</span
+              {{ frequencyLabel(plan.frequency, plan.interval, plan.monthDays)
+              }}{{ plan.holidayShift === 'before' ? ' · с выходных раньше' : '' }}</span
             >
           </div>
           <button

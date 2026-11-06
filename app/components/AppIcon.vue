@@ -48,6 +48,8 @@ import {
   Copy,
   Pause,
   TrendingUp,
+  Sun,
+  Moon,
 } from '@lucide/vue'
 const props = withDefaults(defineProps<{ name: string; size?: number }>(), { size: 20 })
 const icons: Record<string, any> = {
@@ -100,6 +102,8 @@ const icons: Record<string, any> = {
   copy: Copy,
   pause: Pause,
   forecast: TrendingUp,
+  sun: Sun,
+  moon: Moon,
 }
 </script>
 <template>
