@@ -22,6 +22,7 @@ type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
 export const backupVersion = 4
+export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
   .max(40)

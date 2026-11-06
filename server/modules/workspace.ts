@@ -46,6 +46,13 @@ import {
 } from './obligations'
 import { firstDueDate, suggestSplit } from '../../shared/obligations'
 import { shiftMonth } from '../../shared/planning'
+import { automaticBackupOptions, createAutomaticBackups } from './automatic-backups'
+
+let automaticBackups: ReturnType<typeof createAutomaticBackups> | undefined
+let commandQueue = Promise.resolve()
+export function getWorkspaceBackups() {
+  return (automaticBackups ??= createAutomaticBackups(readWorkspace, automaticBackupOptions()))
+}
 
 /** Throws 404 when an update/delete touched nothing, so a stale UI does not report success. */
 export function found<T>(rows: T[], message: string): T[] {
@@ -172,7 +179,39 @@ export const commandSchema = z.discriminatedUnion('op', [
 ])
 export type Command = z.infer<typeof commandSchema>
 
-export async function executeCommand(command: Command) {
+export function executeCommand(command: Command) {
+  // Include the safety snapshot in command ordering, otherwise a concurrent write could commit
+  // between the pre-reset snapshot and the reset transaction and be lost without a copy.
+  const result = commandQueue.then(() => executeBackedUpCommand(command))
+  commandQueue = result.then(
+    () => {},
+    () => {},
+  )
+  return result
+}
+
+export async function flushWorkspaceCommands() {
+  await commandQueue
+  await getWorkspaceBackups().flush()
+}
+
+async function executeBackedUpCommand(command: Command) {
+  const backups = getWorkspaceBackups()
+  await backups.start()
+  if (command.op === 'workspace.restore' || command.op === 'workspace.reset') {
+    if (!(await backups.capture()))
+      throw createError({
+        statusCode: 503,
+        message:
+          'Не удалось сохранить копию перед заменой данных. Проверьте папку автоматических копий.',
+      })
+  }
+  const result = await executeWorkspaceCommand(command)
+  await backups.afterChange()
+  return result
+}
+
+async function executeWorkspaceCommand(command: Command) {
   if (command.op === 'demo.load') {
     await seedDemo()
     return { ok: true }

@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import { backupSchema, type Backup } from '../../shared/backup'
+import { backupMaxBytes, backupSchema, backupVersion, type Backup } from '../../shared/backup'
+import type { AutomaticBackupStatus } from '../../shared/automatic-backups'
 const { workspace: w, refresh, command, pending, loading, error: connectionError } = useWorkspace()
 const { exporting, downloadBackup } = useBackup()
+const {
+  data: automatic,
+  error: automaticError,
+  status: automaticStatus,
+  refresh: refreshAutomatic,
+} = await useFetch<AutomaticBackupStatus>('/api/backups', {
+  watch: [() => w.value.revision],
+})
 const backup = ref<Backup | null>(null),
   name = ref(''),
   error = ref(''),
@@ -20,11 +29,40 @@ const sections = [
   { key: 'obligationEntries', label: 'Погашения и сверки обязательств' },
   { key: 'budgets', label: 'Лимиты бюджета' },
   { key: 'plans', label: 'Планы поступлений и платежей' },
+  { key: 'planVersions', label: 'История настроек планов' },
   { key: 'planOccurrences', label: 'Отметки дат планов' },
 ] as const
 async function updatePreview() {
   await refresh()
   if (!connectionError.value) previewRevision.value = w.value.revision
+}
+async function prepareBackup(raw: unknown) {
+  const result = backupSchema.safeParse(raw)
+  if (!result.success) {
+    const issue = result.error.issues[0]!
+    throw new Error(
+      `Копия не прошла проверку (${issue.path.join('.') || 'структура'}): ${issue.message}`,
+    )
+  }
+  await updatePreview()
+  if (connectionError.value)
+    throw new Error('Не удалось получить текущее состояние. Повторите загрузку копии.')
+  backup.value = result.data
+}
+async function chooseAutomatic(filename: string) {
+  backup.value = null
+  error.value = ''
+  confirmation.value = ''
+  name.value = filename
+  preparing.value = true
+  try {
+    await prepareBackup(await $fetch(`/api/backups/${encodeURIComponent(filename)}`))
+  } catch {
+    error.value =
+      'Не удалось открыть автоматическую копию. Обновите список или выберите другой файл.'
+  } finally {
+    preparing.value = false
+  }
 }
 async function choose(event: Event) {
   const input = event.target as HTMLInputElement
@@ -37,21 +75,9 @@ async function choose(event: Event) {
   if (!file) return
   preparing.value = true
   try {
-    if (file.size > 25 * 1024 * 1024) throw new Error('Копия должна быть не больше 25 МБ')
+    if (file.size > backupMaxBytes) throw new Error('Копия должна быть не больше 25 МБ')
     const raw = JSON.parse((await file.text()).replace(/^\uFEFF/, ''))
-    if (![1, 2, 3].includes(raw?.version))
-      throw new Error('Поддерживаются JSON-копии «Лада» версий 1, 2 и 3')
-    const result = backupSchema.safeParse(raw)
-    if (!result.success) {
-      const issue = result.error.issues[0]!
-      throw new Error(
-        `Копия не прошла проверку (${issue.path.join('.') || 'структура'}): ${issue.message}`,
-      )
-    }
-    await updatePreview()
-    if (connectionError.value)
-      throw new Error('Не удалось получить текущее состояние. Повторите загрузку копии.')
-    backup.value = result.data
+    await prepareBackup(raw)
   } catch (e: any) {
     error.value =
       e instanceof SyntaxError
@@ -96,12 +122,70 @@ async function restore() {
       }}
     </button>
   </div>
+  <section class="panel automatic-backups" aria-labelledby="automatic-backups-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="automatic-backups-title">Автоматические копии</h2>
+        <p v-if="automatic">
+          При запуске и перед заменой данных. Изменений между копиями: {{ automatic.every }}.
+          Максимум копий: {{ automatic.keep }}.
+        </p>
+      </div>
+      <button
+        class="button secondary small-button"
+        :disabled="automaticStatus === 'pending'"
+        @click="refreshAutomatic()"
+      >
+        Обновить
+      </button>
+    </div>
+    <div class="automatic-backups-body">
+      <p v-if="automaticError" class="form-error" role="alert">
+        Не удалось получить сведения об автоматических копиях. Попробуйте обновить список.
+      </p>
+      <p v-else-if="!automatic" class="form-hint" role="status">Проверяем автоматические копии…</p>
+      <template v-if="automatic">
+        <p v-if="automatic.error" class="form-error" role="alert">{{ automatic.error }}</p>
+        <p v-if="automatic.files[0]" class="automatic-backups-latest">
+          Последняя копия:
+          <strong>{{ new Date(automatic.files[0].createdAt).toLocaleString('ru-RU') }}</strong>
+        </p>
+        <p v-else class="form-hint">Сохранённых автоматических копий пока нет.</p>
+        <p class="automatic-backups-path">Папка на сервере: {{ automatic.directory }}</p>
+        <details v-if="automatic.files.length">
+          <summary>Сохранённые копии ({{ automatic.files.length }})</summary>
+          <ul class="automatic-backups-list">
+            <li v-for="file in automatic.files" :key="file.name">
+              <time :datetime="file.createdAt">{{
+                new Date(file.createdAt).toLocaleString('ru-RU')
+              }}</time>
+              <div class="automatic-backups-actions">
+                <a
+                  :href="`/api/backups/${encodeURIComponent(file.name)}`"
+                  download
+                  class="button secondary small-button"
+                  >Скачать</a
+                >
+                <button
+                  class="button secondary small-button"
+                  :disabled="pending || preparing"
+                  @click="chooseAutomatic(file.name)"
+                >
+                  Подготовить восстановление
+                </button>
+              </div>
+            </li>
+          </ul>
+        </details>
+      </template>
+    </div>
+  </section>
   <div class="backup-layout">
     <section class="panel backup-upload">
       <div class="panel-heading">
         <div>
           <h2>Восстановление из JSON</h2>
-          <p>Поддерживаются копии версий 1, 2 и 3</p>
+          <p>Поддерживаются копии версий 1–{{ backupVersion }}</p>
         </div>
         <AppIcon name="restore" />
       </div>
@@ -184,7 +268,8 @@ async function restore() {
       <h2>Что сохраняется в копии</h2>
       <p>
         Счета и их начальные остатки, операции и корректировки, импортные идентификаторы, цели,
-        обязательства, календарь и список покупок.
+        обязательства и история погашений, календарь, список покупок, бюджеты, планы, их версии и
+        отметки дат.
       </p>
       <p>
         Копия содержит финансовые данные в обычном JSON-файле. Храните её там, где вам удобно
