@@ -53,10 +53,18 @@ export const transactionSchema = z
     path: ['toAccountId'],
   })
 export const goalSchema = z.object({
+  mandatory: z.boolean().default(false),
+  categoryId: z.uuid().nullable().default(null),
+  purchaseMonth: z
+    .string()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+    .nullable()
+    .default(null),
+  monthlyContribution: amount.default('0'),
   title,
   target: positiveAmount,
   saved: amount,
-  status: z.enum(['wish', 'saving', 'planned', 'done']).default('wish'),
+  status: z.enum(['wish', 'saving', 'planned', 'done', 'cancelled']).default('wish'),
   priority: z.enum(['normal', 'high']).default('normal'),
   deadline: date.nullable().default(null),
 })

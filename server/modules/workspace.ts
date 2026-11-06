@@ -56,6 +56,7 @@ import {
   checkCategoryInput,
 } from './categories'
 import { configureTimeZone } from '../../shared/time-zone'
+import { goalCommands, isGoalCommand, executeGoalCommand, afterGoalConfirm } from './goals'
 import { finishCommand } from './command-history'
 import type { CommandHistoryEntry } from '../../shared/command-history'
 
@@ -137,6 +138,7 @@ export const commandSchema = z.discriminatedUnion('op', [
   ...planningCommands,
   ...obligationCommands,
   ...categoryCommands,
+  ...goalCommands,
   z.object({ op: z.literal('account.create'), data: accountSchema }),
   z.object({
     op: z.literal('account.update'),
@@ -176,14 +178,7 @@ export const commandSchema = z.discriminatedUnion('op', [
     expectedRevision: revision,
     confirmation: z.literal('ВОССТАНОВИТЬ'),
   }),
-  z.object({ op: z.literal('goal.create'), data: goalSchema }),
-  z.object({
-    op: z.literal('goal.update'),
-    id: z.uuid(),
-    data: goalSchema,
-    expectedRevision: revision.optional(),
-  }),
-  z.object({ op: z.literal('goal.delete'), id: z.uuid() }),
+
   z.object({ op: z.literal('event.create'), data: eventSchema }),
   z.object({ op: z.literal('event.toggle'), id: z.uuid(), done: z.boolean() }),
   z.object({ op: z.literal('event.delete'), id: z.uuid() }),
@@ -260,16 +255,18 @@ async function executeWorkspaceCommand(command: Command) {
       // The schedule of an obligation is edited through the obligation itself.
       if ('id' in command && command.id && command.op.startsWith('plan.')) {
         const [plan] = await db.select().from(plans).where(eq(plans.id, command.id))
-        if (plan?.source === 'obligation' || plan?.source === 'credit')
+        if (['obligation', 'credit', 'goal'].includes(plan?.source || ''))
           throw createError({
             statusCode: 400,
             message:
-              'Этот график платежей ведётся в разделе «Кредиты и долги». Измените обязательство.',
+              'Этот график ведётся связанной карточкой. Измените обязательство, карту или цель.',
           })
       }
       const result = await executePlanningCommand(db, command, revisionBefore)
-      if (command.op === 'occurrence.confirm' && result.transactionId && !result.alreadyPaid)
+      if (command.op === 'occurrence.confirm' && result.transactionId && !result.alreadyPaid) {
         await afterPlanConfirm(db, command.planId, result.transactionId)
+        await afterGoalConfirm(db, command.planId, result.transactionId)
+      }
       await syncObligations(db, revisionBefore)
       return finishCommand(db, command, result, revisionBefore)
     }
@@ -287,6 +284,8 @@ async function executeWorkspaceCommand(command: Command) {
     let result: CommandResult = { ok: true }
     if (isCategoryCommand(command))
       return finishCommand(db, command, await executeCategoryCommand(db, command), revisionBefore)
+    if (isGoalCommand(command))
+      return finishCommand(db, command, await executeGoalCommand(db, command), revisionBefore)
     if (isObligationCommand(command)) {
       result = await executeObligationCommand(db, command, revisionBefore)
       await syncObligations(db, revisionBefore)
@@ -482,18 +481,7 @@ async function executeWorkspaceCommand(command: Command) {
           .where(inArray(transactions.id, ids))
         break
       }
-      case 'goal.create':
-        await db.insert(goals).values({ id: crypto.randomUUID(), ...command.data })
-        break
-      case 'goal.update':
-        found(
-          await db.update(goals).set(command.data).where(eq(goals.id, command.id)).returning(),
-          'Цель не найдена',
-        )
-        break
-      case 'goal.delete':
-        found(await db.delete(goals).where(eq(goals.id, command.id)).returning(), 'Цель не найдена')
-        break
+
       case 'event.create':
         await db.insert(events).values({ id: crypto.randomUUID(), ...command.data })
         break
@@ -787,6 +775,7 @@ async function seedDemo(tx: WriteTransaction) {
       title: 'Отпуск у моря',
       target: '18000000',
       saved: '7200000',
+      funding: { unassigned: '7200000', entries: [], purchases: [] },
       status: 'saving',
       priority: 'high',
       deadline: day(180),
@@ -796,6 +785,7 @@ async function seedDemo(tx: WriteTransaction) {
       title: 'Подушка спокойствия',
       target: '60000000',
       saved: '21000000',
+      funding: { unassigned: '21000000', entries: [], purchases: [] },
       status: 'saving',
       priority: 'high',
       deadline: null,
@@ -814,6 +804,7 @@ async function seedDemo(tx: WriteTransaction) {
       title: 'Рабочее кресло',
       target: '3200000',
       saved: '3200000',
+      funding: { unassigned: '3200000', entries: [], purchases: [] },
       status: 'planned',
       priority: 'normal',
       deadline: day(15),

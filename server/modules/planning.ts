@@ -155,7 +155,7 @@ export async function executePlanningCommand(
   command: PlanningCommand,
   currentRevision: string,
   /** Internal callers: the owner of a plan they create (an obligation's payment schedule). */
-  owner: { source: 'obligation' | 'credit'; sourceId: string } | null = null,
+  owner: { source: 'obligation' | 'credit' | 'goal'; sourceId: string } | null = null,
 ): Promise<CommandResult> {
   switch (command.op) {
     case 'budget.set':

@@ -39,6 +39,11 @@ export interface Transaction {
   deletedAt: string | null
 }
 export interface Goal {
+  funding?: import('./goals').GoalFunding
+  mandatory?: boolean
+  categoryId?: string | null
+  purchaseMonth?: string | null
+  monthlyContribution?: string
   id: string
   title: string
   target: string

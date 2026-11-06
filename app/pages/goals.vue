@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { Goal } from '../../shared/types'
-import { money, toMinor, toMajor } from '../../shared/money'
+import { decisionMoney, goalFeasibility } from '../../shared/goals'
+import { money, toMinor, toMajor, localDate } from '../../shared/money'
 const { workspace: w, command, pending } = useWorkspace()
+const moneyGoal = ref<Goal | null>(null)
+const free = computed(() => decisionMoney(w.value, localDate()))
 const open = ref(false),
   editing = ref<Goal | null>(null),
   deleting = ref<Goal | null>(null),
@@ -14,11 +17,16 @@ const form = reactive({
   status: 'wish',
   priority: 'normal',
   deadline: '',
+  mandatory: false,
+  categoryId: null as string | null,
+  purchaseMonth: '',
+  monthlyContribution: '0',
 })
 const columns = [
   { id: 'wish', label: 'Хочу', hint: 'Идеи для лучшей жизни', icon: 'sparkles' },
   { id: 'saving', label: 'Коплю', hint: 'Маленькими шагами к цели', icon: 'savings' },
   { id: 'planned', label: 'Запланировано', hint: 'Осталось сделать шаг', icon: 'calendar' },
+  { id: 'cancelled', label: 'Отменено', hint: 'Резервы освобождены', icon: 'close' },
   { id: 'done', label: 'Исполнено', hint: 'Повод порадоваться', icon: 'done' },
 ]
 function requestDelete() {
@@ -35,8 +43,23 @@ function edit(goal?: Goal, status = 'wish') {
           target: toMajor(goal.target),
           saved: toMajor(goal.saved),
           deadline: goal.deadline || '',
+          mandatory: goal.mandatory || false,
+          categoryId: goal.categoryId || null,
+          purchaseMonth: goal.purchaseMonth || '',
+          monthlyContribution: toMajor(goal.monthlyContribution || '0'),
         }
-      : { title: '', target: '', saved: '', status, priority: 'normal', deadline: '' },
+      : {
+          title: '',
+          target: '',
+          saved: '',
+          status: status === 'done' ? 'wish' : status,
+          priority: 'normal',
+          deadline: '',
+          mandatory: false,
+          categoryId: null,
+          purchaseMonth: '',
+          monthlyContribution: '0',
+        },
   )
   error.value = ''
   open.value = true
@@ -49,6 +72,8 @@ async function save() {
       target: toMinor(form.target),
       saved: toMinor(form.saved || '0'),
       deadline: form.deadline || null,
+      purchaseMonth: form.purchaseMonth || null,
+      monthlyContribution: toMinor(form.monthlyContribution || '0'),
     }
     await command(
       editing.value
@@ -64,7 +89,9 @@ async function save() {
 async function move(goal: Goal, status: string) {
   try {
     await command(
-      { op: 'goal.update', id: goal.id, data: { ...goal, status } },
+      status === 'cancelled'
+        ? { op: 'goal.cancel', id: goal.id, expectedRevision: w.value.revision }
+        : { op: 'goal.update', id: goal.id, data: { ...goal, status } },
       'Статус цели изменён',
     )
   } catch {}
@@ -101,6 +128,21 @@ const progress = (g: Goal) => Math.min(100, Math.round((Number(g.saved) / Number
       операцию и не меняет баланс счетов.
     </p>
   </div>
+  <div class="summary-strip">
+    <div>
+      <span>Для новых решений · 90 дней</span><strong>{{ money(free.available) }}</strong>
+    </div>
+    <div>
+      <span>Резервы на текущих счетах</span><strong>{{ money(free.reserved) }}</strong>
+    </div>
+    <div>
+      <span>Ожидаемые платежи</span><strong>{{ money(free.payments) }}</strong>
+    </div>
+  </div>
+  <p class="form-hint">
+    Минимум прогноза с учётом планов и резервов. Резерв на запланированную покупку освобождается в
+    прогнозную дату: одна сумма не вычитается дважды.
+  </p>
   <div class="kanban">
     <section
       v-for="column in columns"
@@ -159,6 +201,14 @@ const progress = (g: Goal) => Math.min(100, Math.round((Number(g.saved) / Number
             }}</span
           >
         </div>
+        <p v-if="goal.mandatory" class="priority-badge">Обязательная потребность</p>
+        <p class="form-hint">
+          На счетах: {{ money(goalFeasibility(goal, w, localDate()).reserved) }} · по плану к сроку:
+          {{ goalFeasibility(goal, w, localDate()).onTrack ? 'достижимо' : 'нужно пополнение' }}
+        </p>
+        <button class="button secondary small-button" @click="moneyGoal = goal">
+          Деньги и покупка
+        </button>
         <label class="status-select"
           ><span class="sr-only">Статус {{ goal.title }}</span
           ><select
@@ -166,7 +216,9 @@ const progress = (g: Goal) => Math.min(100, Math.round((Number(g.saved) / Number
             :disabled="pending"
             @change="move(goal, ($event.target as HTMLSelectElement).value)"
           >
-            <option v-for="c in columns" :key="c.id" :value="c.id">{{ c.label }}</option>
+            <option v-for="c in columns" :key="c.id" :value="c.id" :disabled="c.id === 'done'">
+              {{ c.label }}
+            </option>
           </select></label
         >
       </article>
@@ -201,7 +253,9 @@ const progress = (g: Goal) => Math.min(100, Math.round((Number(g.saved) / Number
       <div class="form-row">
         <label
           >Статус<select v-model="form.status">
-            <option v-for="c in columns" :key="c.id" :value="c.id">{{ c.label }}</option>
+            <option v-for="c in columns" :key="c.id" :value="c.id" :disabled="c.id === 'done'">
+              {{ c.label }}
+            </option>
           </select></label
         ><label
           >Приоритет<select v-model="form.priority">
@@ -210,6 +264,27 @@ const progress = (g: Goal) => Math.min(100, Math.round((Number(g.saved) / Number
           </select></label
         >
       </div>
+      <label><input v-model="form.mandatory" type="checkbox" /> Обязательная потребность</label>
+      <label
+        >Категория бюджета<select v-model="form.categoryId">
+          <option :value="null">Без категории</option>
+          <option
+            v-for="c in (w.categories || []).filter((c) => !c.archived || c.id === form.categoryId)"
+            :key="c.id"
+            :value="c.id"
+          >
+            {{ c.name }}
+          </option>
+        </select></label
+      >
+      <label>Месяц покупки<input v-model="form.purchaseMonth" type="month" /></label>
+      <label
+        >План пополнений в месяц, ₽<input v-model="form.monthlyContribution" inputmode="decimal"
+      /></label>
+      <p class="form-hint">
+        Статус «Запланировано», категория и месяц создают платёж в календаре и бюджете. Завершите
+        карточку через покупку. Сумма без счёта — оценка: для защиты денег создайте резерв.
+      </p>
       <label>Желаемая дата<input v-model="form.deadline" type="date" /></label>
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
       <div class="dialog-actions">
@@ -224,6 +299,12 @@ const progress = (g: Goal) => Math.min(100, Math.round((Number(g.saved) / Number
       </div>
     </form></AppDialog
   >
+  <AppDialog
+    :model-value="!!moneyGoal"
+    :title="moneyGoal?.title || ''"
+    @update:model-value="moneyGoal = null"
+    ><GoalMoneyForm v-if="moneyGoal" :goal="moneyGoal" @saved="moneyGoal = null"
+  /></AppDialog>
   <AppDialog
     :model-value="!!deleting"
     title="Удалить цель?"

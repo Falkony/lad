@@ -75,6 +75,14 @@ export const transactions = pgTable(
   ],
 )
 export const goals = pgTable('goals', {
+  mandatory: boolean('mandatory').notNull().default(false),
+  categoryId: text('category_id').references(() => categories.id),
+  purchaseMonth: text('purchase_month'),
+  monthlyContribution: money('monthly_contribution').default('0'),
+  funding: jsonb('funding')
+    .$type<import('../../shared/goals').GoalFunding>()
+    .notNull()
+    .default({ unassigned: '0', entries: [], purchases: [] }),
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   target: money('target'),

@@ -1,3 +1,4 @@
+import { goalFundingSchema, fundingOf, goalFundingIssues } from './goals'
 import { categorySchema, withCategoryIds } from './categories'
 import { validTimeZone } from './time-zone'
 import { z } from 'zod'
@@ -24,7 +25,7 @@ import {
 type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-export const backupVersion = 7
+export const backupVersion = 8
 export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
@@ -84,12 +85,17 @@ const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
  */
 export function upgradeBackup(input: unknown): unknown {
   const upgraded = upgradeObligations(upgradePlans(input))
-  if (isRow(input) && [1, 2, 3, 4, 5, 6].includes(input.version as number) && isRow(upgraded))
+  if (isRow(input) && [1, 2, 3, 4, 5, 6, 7].includes(input.version as number) && isRow(upgraded))
     return withCategoryIds({
       ...upgraded,
       timeZone: upgraded.timeZone || 'Europe/Moscow',
+      goals: rows(upgraded.goals).map((g) =>
+        isRow(g)
+          ? { ...g, funding: g.funding || { unassigned: g.saved, entries: [], purchases: [] } }
+          : g,
+      ),
       version: backupVersion,
-      commandHistory: [5, 6].includes(input.version as number) ? upgraded.commandHistory : [],
+      commandHistory: [5, 6, 7].includes(input.version as number) ? upgraded.commandHistory : [],
     })
   return upgraded
 }
@@ -219,7 +225,7 @@ const backupObject = z
     accounts: z.array(account).max(1000),
     transactions: z.array(transaction).max(50000),
     deletedTransactions: z.array(transaction).max(50000).default([]),
-    goals: z.array(goalSchema.extend({ id: z.uuid() })).max(10000),
+    goals: z.array(goalSchema.extend({ id: z.uuid(), funding: goalFundingSchema })).max(10000),
     events: z.array(eventSchema.extend({ id: z.uuid() })).max(20000),
     shopping: z.array(shoppingSchema.extend({ id: z.uuid() })).max(10000),
     obligations: z.array(obligationSchema.extend({ id: z.uuid() })).max(10000),
@@ -241,6 +247,8 @@ const backupObject = z
     commandHistory: z.array(commandHistoryEntrySchema).max(100000),
   })
   .superRefine((backup, ctx) => {
+    for (const message of goalFundingIssues(backup, true))
+      ctx.addIssue({ code: 'custom', message, path: ['goals'] })
     for (const key of [
       'categories',
       'accounts',
@@ -367,6 +375,9 @@ const backupObject = z
       allTransactions = new Map(
         [...backup.transactions, ...backup.deletedTransactions].map((t) => [t.id, t]),
       )
+    for (const plan of backup.plans.filter((p) => p.source === 'goal'))
+      if (!backup.goals.some((g) => g.id === plan.sourceId))
+        issue('План покупки ссылается на отсутствующую цель')
     for (const card of backup.accounts.filter((a) => a.kind === 'credit')) {
       if (BigInt(card.creditSettings.limit) <= 0n)
         issue('Кредитный лимит должен быть положительным')
@@ -447,6 +458,7 @@ export function createBackup(
   return withCategoryIds({
     timeZone: workspace.timeZone || 'Europe/Moscow',
     ...data,
+    goals: data.goals.map((g) => ({ ...g, funding: fundingOf(g) })),
     commandHistory: workspace.commandHistory || [],
     version: backupVersion,
     exportedAt: new Date().toISOString(),

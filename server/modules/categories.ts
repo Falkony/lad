@@ -10,6 +10,7 @@ import {
   planVersions,
   planOccurrences,
   settings,
+  goals,
 } from '../db/schema'
 import { revision } from '../../shared/schemas'
 import { validTimeZone } from '../../shared/time-zone'
@@ -90,7 +91,10 @@ export async function executeCategoryCommand(db: WriteTransaction, command: Cate
       .where(eq(table.categoryId, source.id))
   if (command.op === 'category.rename')
     await db.update(budgets).set({ category: target.name }).where(eq(budgets.categoryId, source.id))
-  else await db.delete(categories).where(eq(categories.id, source.id))
+  else {
+    await db.update(goals).set({ categoryId: target.id }).where(eq(goals.categoryId, source.id))
+    await db.delete(categories).where(eq(categories.id, source.id))
+  }
   return { ok: true }
 }
 
