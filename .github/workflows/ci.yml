@@ -1,10 +1,14 @@
 name: Checks
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '26'
@@ -17,3 +21,61 @@ jobs:
         env:
           LAD_DATA_DIR: /tmp/lad-ci/db
           LAD_BACKUP_DIR: /tmp/lad-ci/backups
+      - run: npm run test:production
+      - run: npm audit --omit=dev --audit-level=moderate
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: lad_test_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lad_test_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+      - run: npm ci
+      - run: npm test -- tests/postgres-restore.test.ts
+        env:
+          LAD_TEST_DATABASE_URL: postgres://postgres:ci-only-password@127.0.0.1:5432/lad_test_ci
+  container:
+    runs-on: ubuntu-latest
+    env:
+      LAD_HOSTNAME: finance.example.com
+      LAD_OWNER_LOGIN: owner
+      POSTGRES_PASSWORD: 1234567890abcdef1234567890abcdef
+      POSTGRES_ADMIN_PASSWORD: abcdef1234567890abcdef1234567890
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Prepare isolated CI credentials
+        run: |
+          node --input-type=module <<'JS'
+          import {hashPassword} from './scripts/password.mjs'
+          import {appendFileSync} from 'node:fs'
+          appendFileSync(process.env.GITHUB_ENV, `LAD_OWNER_PASSWORD_HASH=${await hashPassword('CI-only temporary password 2026')}\n`)
+          JS
+      - run: docker compose -f deploy/compose.server.yaml config --quiet
+      - run: docker compose -f deploy/compose.server.yaml build app
+      - name: Validate HTTPS proxy configuration
+        run: docker run --rm --entrypoint caddy -e LAD_HOSTNAME -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine validate --config /etc/caddy/Caddyfile
+      - run: docker compose -f deploy/compose.server.yaml up -d --wait db app
+      - run: docker compose -f deploy/compose.server.yaml run --rm --no-deps app node scripts/production-smoke.mjs
+      - if: failure()
+        run: docker compose -f deploy/compose.server.yaml logs --tail 100
+      - if: always()
+        run: docker compose -f deploy/compose.server.yaml down --volumes

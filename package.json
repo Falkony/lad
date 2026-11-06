@@ -10,7 +10,10 @@
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "start": "node scripts/serve.mjs",
+    "auth:hash": "node scripts/auth-hash.mjs",
+    "test:production": "node scripts/production-smoke.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "~0.5.15",
@@ -34,5 +37,14 @@
     "typescript": "^5.0.0",
     "vitest": "^5.1.0",
     "vue-tsc": "^3.3.14"
+  },
+  "overrides": {
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.5",
+    "esbuild": "^0.28.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "vue-demi@0.14.10": true
   }
 }

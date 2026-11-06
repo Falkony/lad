@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { desc, eq, lt } from 'drizzle-orm'
+import { desc, eq, lt, sql } from 'drizzle-orm'
 import { getDb, type WriteTransaction } from '../db'
 import { commandHistory, workspaceGuard } from '../db/schema'
 import type { Command } from './workspace'
 import type { CommandResult } from '../../shared/planning-types'
+import { withoutWorkspaceId } from '../../shared/portable'
 import type { CommandHistoryPage } from '../../shared/command-history'
 import { syncBudgetHistory, validatePeriodSnapshots } from './periods'
 import { syncTransactionDetails } from './transaction-details'
@@ -52,6 +53,8 @@ export async function finishCommand(
   await db.update(workspaceGuard).set({ revision }).where(eq(workspaceGuard.id, 1))
   await db.insert(commandHistory).values({
     id: randomUUID(),
+    actorUserId: sql`nullif(current_setting('lad.actor_id',true),'')`,
+    actorName: sql`(SELECT username FROM auth_users WHERE id=nullif(current_setting('lad.actor_id',true),''))`,
     revision,
     createdAt: new Date().toISOString(),
     operation: op,
@@ -71,5 +74,8 @@ export async function readCommandHistory(before?: string, limit = 20): Promise<C
     .limit(limit + 1)
   const hasMore = entries.length > limit
   const page = entries.slice(0, limit)
-  return { entries: page, nextBefore: hasMore ? page.at(-1)!.revision : null }
+  return {
+    entries: page.map(withoutWorkspaceId),
+    nextBefore: hasMore ? page.at(-1)!.revision : null,
+  }
 }

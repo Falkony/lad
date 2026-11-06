@@ -10,6 +10,7 @@ import { creditMigration } from './credit-migration'
 import { goalsMigration } from './goals-migration'
 import { importQualityMigration } from './import-quality-migration'
 import { periodsMigration } from './periods-migration'
+import { authMigration } from './auth-migration'
 
 export const migrationSteps = [
   { version: 4, sql: repairImportOrigin },
@@ -24,6 +25,7 @@ export const migrationSteps = [
   { version: 13, sql: goalsMigration },
   { version: 14, sql: importQualityMigration },
   { version: 15, sql: periodsMigration },
+  { version: 16, sql: authMigration },
 ]
 export const latestMigrationVersion = migrationSteps.at(-1)!.version
 

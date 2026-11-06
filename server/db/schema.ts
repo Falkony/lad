@@ -16,7 +16,57 @@ import type { CommandHistoryEntry } from '../../shared/command-history'
 import { numeric } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 const money = (name: string) => numeric(name, { precision: 16, scale: 0 }).notNull()
+export const authUsers = pgTable('auth_users', {
+  id: text('id').primaryKey(),
+  username: text('username').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  createdAt: text('created_at').notNull(),
+})
+export const authWorkspaces = pgTable('auth_workspaces', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  ownerId: text('owner_id').references(() => authUsers.id),
+  singleton: boolean('singleton').notNull().default(true).unique(),
+})
+export const authMemberships = pgTable(
+  'auth_memberships',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => authUsers.id),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => authWorkspaces.id),
+    role: text('role').notNull(),
+  },
+  (t) => [uniqueIndex('auth_memberships_user_id_workspace_id_key').on(t.userId, t.workspaceId)],
+)
+export const authSessions = pgTable('auth_sessions', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => authUsers.id),
+  workspaceId: text('workspace_id')
+    .notNull()
+    .references(() => authWorkspaces.id),
+  tokenHash: text('token_hash').notNull().unique(),
+  deviceName: text('device_name').notNull(),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+})
+export const authLoginAttempts = pgTable('auth_login_attempts', {
+  key: text('key').primaryKey(),
+  count: integer('count').notNull(),
+  startedAt: text('started_at').notNull(),
+})
+const workspaceReference = () =>
+  text('workspace_id')
+    .notNull()
+    .default(sql`lad_workspace_id()`)
+    .references(() => authWorkspaces.id)
 export const categories = pgTable('categories', {
+  workspaceId: workspaceReference(),
   id: text('id').primaryKey(),
   name: text('name').notNull().unique(),
   archived: boolean('archived').notNull().default(false),
@@ -27,6 +77,7 @@ const categoryReference = () =>
     .default(sql`NULL`)
     .notNull()
 export const importRules = pgTable('import_rules', {
+  workspaceId: workspaceReference(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   pattern: text('pattern').notNull(),
@@ -39,6 +90,7 @@ export const importRules = pgTable('import_rules', {
   enabled: boolean('enabled').notNull().default(true),
 })
 export const importTemplates = pgTable('import_templates', {
+  workspaceId: workspaceReference(),
   id: text('id').primaryKey(),
   name: text('name').notNull().unique(),
   mapping: jsonb('mapping')
@@ -46,6 +98,7 @@ export const importTemplates = pgTable('import_templates', {
     .notNull(),
 })
 export const importBatches = pgTable('import_batches', {
+  workspaceId: workspaceReference(),
   id: text('id').primaryKey(),
   createdAt: text('created_at').notNull(),
   fileName: text('file_name').notNull(),
@@ -61,6 +114,7 @@ export const importBatches = pgTable('import_batches', {
 export const importKeys = pgTable(
   'import_keys',
   {
+    workspaceId: workspaceReference(),
     id: text('id').primaryKey(),
     accountId: text('account_id')
       .notNull()
@@ -74,6 +128,7 @@ export const importKeys = pgTable(
   (t) => [uniqueIndex('import_keys_account_id_key_key').on(t.accountId, t.key)],
 )
 export const accounts = pgTable('accounts', {
+  workspaceId: workspaceReference(),
   creditSettings: jsonb('credit_settings')
     .$type<import('../../shared/credit').CreditSettings>()
     .notNull()
@@ -98,6 +153,7 @@ export const accounts = pgTable('accounts', {
 export const budgetHistory = pgTable(
   'budget_history',
   {
+    workspaceId: workspaceReference(),
     id: text('id').primaryKey(),
     month: text('month').notNull(),
     categoryId: text('category_id').notNull(),
@@ -119,6 +175,7 @@ export const budgetHistory = pgTable(
 export const reconciliations = pgTable(
   'reconciliations',
   {
+    workspaceId: workspaceReference(),
     id: text('id').primaryKey(),
     accountId: text('account_id')
       .notNull()
@@ -133,6 +190,7 @@ export const reconciliations = pgTable(
 export const periodClosures = pgTable(
   'period_closures',
   {
+    workspaceId: workspaceReference(),
     id: text('id').primaryKey(),
     month: text('month').notNull(),
     generation: integer('generation').notNull(),
@@ -151,6 +209,7 @@ export const periodClosures = pgTable(
 export const transactions = pgTable(
   'transactions',
   {
+    workspaceId: workspaceReference(),
     splits: jsonb('splits')
       .$type<import('../../shared/transaction-details').TransactionSplit[]>()
       .notNull()
@@ -185,6 +244,7 @@ export const transactions = pgTable(
   ],
 )
 export const goals = pgTable('goals', {
+  workspaceId: workspaceReference(),
   mandatory: boolean('mandatory').notNull().default(false),
   categoryId: text('category_id').references(() => categories.id),
   purchaseMonth: text('purchase_month'),
@@ -202,6 +262,7 @@ export const goals = pgTable('goals', {
   deadline: text('deadline'),
 })
 export const events = pgTable('events', {
+  workspaceId: workspaceReference(),
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   date: text('date').notNull(),
@@ -211,6 +272,7 @@ export const events = pgTable('events', {
   note: text('note').notNull(),
 })
 export const shopping = pgTable('shopping', {
+  workspaceId: workspaceReference(),
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   quantity: text('quantity').notNull(),
@@ -218,6 +280,7 @@ export const shopping = pgTable('shopping', {
   checked: boolean('checked').notNull().default(false),
 })
 export const obligations = pgTable('obligations', {
+  workspaceId: workspaceReference(),
   bankSchedule: jsonb('bank_schedule')
     .$type<NonNullable<import('../../shared/types').Obligation['bankSchedule']>>()
     .notNull()
@@ -238,6 +301,7 @@ export const obligations = pgTable('obligations', {
 export const obligationEntries = pgTable(
   'obligation_entries',
   {
+    workspaceId: workspaceReference(),
     id: text('id').primaryKey(),
     obligationId: text('obligation_id')
       .notNull()
@@ -258,17 +322,22 @@ export const obligationEntries = pgTable(
   (t) => [index('obligation_entries_obligation').on(t.obligationId)],
 )
 export const settings = pgTable('settings', {
+  workspaceId: workspaceReference(),
   key: text('key').primaryKey(),
   value: text('value').notNull(),
 })
 export const workspaceGuard = pgTable('workspace_guard', {
+  workspaceId: workspaceReference(),
   id: integer('id').primaryKey(),
   revision: numeric('revision', { precision: 20, scale: 0 }).notNull().default('0'),
 })
 export const commandHistory = pgTable('command_history', {
+  workspaceId: workspaceReference(),
   id: text('id').primaryKey(),
   revision: numeric('revision', { precision: 20, scale: 0 }).notNull().unique(),
   createdAt: timestamp('created_at', { mode: 'string', withTimezone: true }).notNull().defaultNow(),
+  actorUserId: text('actor_user_id'),
+  actorName: text('actor_name'),
   operation: text('operation').notNull(),
   payload: jsonb('payload').$type<CommandHistoryEntry['payload']>().notNull(),
   result: jsonb('result').$type<CommandHistoryEntry['result']>().notNull(),
@@ -276,6 +345,7 @@ export const commandHistory = pgTable('command_history', {
 export const budgets = pgTable(
   'budgets',
   {
+    workspaceId: workspaceReference(),
     id: text('id').primaryKey(),
     month: text('month').notNull(),
     category: text('category').notNull(),
@@ -285,6 +355,7 @@ export const budgets = pgTable(
   (t) => [uniqueIndex('budgets_month_category').on(t.month, t.category)],
 )
 const planFields = () => ({
+  workspaceId: workspaceReference(),
   customDates: jsonb('custom_dates')
     .$type<{ date: string; amount: string }[]>()
     .notNull()
@@ -333,6 +404,7 @@ export const planVersions = pgTable(
 export const planOccurrences = pgTable(
   'plan_occurrences',
   {
+    workspaceId: workspaceReference(),
     id: text('id').primaryKey(),
     planId: text('plan_id')
       .notNull()

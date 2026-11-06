@@ -25,6 +25,7 @@ import {
   budgetHistory,
   reconciliations,
   periodClosures,
+  authWorkspaces,
 } from '../db/schema'
 import {
   accountSchema,
@@ -62,6 +63,7 @@ import {
   executeCategoryCommand,
   checkCategoryInput,
 } from './categories'
+import { portableRows } from '../../shared/portable'
 import { configureTimeZone } from '../../shared/time-zone'
 import { goalCommands, isGoalCommand, executeGoalCommand, afterGoalConfirm } from './goals'
 import {
@@ -77,6 +79,8 @@ import {
   executePeriodCommand,
   guardClosedPeriods,
 } from './periods'
+import { assertCommandActor } from './auth'
+import type { AuthActor } from '../../shared/auth'
 import { finishCommand } from './command-history'
 import type { CommandHistoryEntry } from '../../shared/command-history'
 
@@ -190,13 +194,15 @@ export async function readWorkspace(
           .from(transactions)
           .innerJoin(obligationEntries, eq(obligationEntries.transactionId, transactions.id))
           .where(isNull(transactions.deletedAt))
+        const [scope] = await db.select().from(authWorkspaces)
         clientProjection = {
+          workspaceId: scope!.id,
           transactionRange: { from, to: localDate() },
           referenceTransactions,
           activeTransactionIds: active.map((t) => t.id),
         }
       }
-      return {
+      return portableRows({
         budgetHistory: from ? [] : await db.select().from(budgetHistory),
         reconciliations: from ? [] : await db.select().from(reconciliations),
         periodClosures: from ? [] : await db.select().from(periodClosures),
@@ -229,7 +235,7 @@ export async function readWorkspace(
                 .orderBy(commandHistory.revision),
             }
           : {}),
-      } as Workspace
+      }) as Workspace
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   )
@@ -306,10 +312,10 @@ export const commandSchema = z.discriminatedUnion('op', [
 ])
 export type Command = z.infer<typeof commandSchema>
 
-export function executeCommand(command: Command) {
+export function executeCommand(command: Command, actor?: AuthActor) {
   // Include the safety snapshot in command ordering, otherwise a concurrent write could commit
   // between the pre-reset snapshot and the reset transaction and be lost without a copy.
-  const result = commandQueue.then(() => executeBackedUpCommand(command))
+  const result = commandQueue.then(() => executeBackedUpCommand(command, actor))
   commandQueue = result.then(
     () => {},
     () => {},
@@ -322,7 +328,7 @@ export async function flushWorkspaceCommands() {
   await getWorkspaceBackups().flush()
 }
 
-async function executeBackedUpCommand(command: Command) {
+async function executeBackedUpCommand(command: Command, actor?: AuthActor) {
   const backups = getWorkspaceBackups()
   await backups.start()
   if (command.op === 'workspace.restore' || command.op === 'workspace.reset') {
@@ -333,7 +339,7 @@ async function executeBackedUpCommand(command: Command) {
           'Не удалось сохранить копию перед заменой данных. Проверьте папку автоматических копий.',
       })
   }
-  const result = await executeWorkspaceCommand(command)
+  const result = await executeWorkspaceCommand(command, actor)
   if (command.op === 'settings.update') configureTimeZone(command.timeZone)
   if (command.op === 'workspace.restore') configureTimeZone(command.backup.timeZone)
   if (command.op === 'workspace.reset') configureTimeZone('Europe/Moscow')
@@ -341,7 +347,7 @@ async function executeBackedUpCommand(command: Command) {
   return result
 }
 
-async function executeWorkspaceCommand(command: Command) {
+async function executeWorkspaceCommand(command: Command, actor?: AuthActor) {
   const client = await getDb()
   return client.transaction(async (db) => {
     const [guard] = await db
@@ -350,6 +356,8 @@ async function executeWorkspaceCommand(command: Command) {
       .where(eq(workspaceGuard.id, 1))
       .for('update')
     const revisionBefore = guard!.revision
+    await assertCommandActor(db, actor, command.op)
+    await db.execute(sql`SELECT set_config('lad.actor_id',${actor?.userId || ''},true)`)
     await guardClosedPeriods(db, command)
     await checkCategoryInput(db, command)
     if (command.op === 'demo.load') {

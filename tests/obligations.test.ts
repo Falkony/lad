@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PGlite } from '@electric-sql/pglite'
 import { commandSchema, executeCommand, readWorkspace } from '../server/modules/workspace'
-import { migration } from '../server/db/migration'
+import { migration, migrationThrough } from '../server/db/migration'
 import { obligationMigration } from '../server/db/obligation-migration'
 import { backupSchema, createBackup } from '../shared/backup'
 import { localDate } from '../shared/money'
@@ -432,7 +432,7 @@ describe('migration 9', () => {
   it('keeps the balance as the opening balance and creates the schedule plan', async () => {
     const db = new PGlite()
     try {
-      await db.exec(migration.replace(obligationMigration, ''))
+      await db.exec(migrationThrough(8))
       await db.exec(`
         INSERT INTO obligations (id,title,kind,remaining,payment,due_day,rate)
           VALUES ('o','Кредит','credit',1000000,260000,1,'12'),

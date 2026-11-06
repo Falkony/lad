@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 export const commandHistoryEntrySchema = z.object({
   id: z.uuid(),
+  actorUserId: z.uuid().nullable().default(null),
+  actorName: z.string().max(64).nullable().default(null),
   revision: z.string().regex(/^[1-9]\d{0,19}$/),
   createdAt: z
     .string()

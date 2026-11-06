@@ -1,3 +1,4 @@
+import { portableRows } from '../../shared/portable'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { eq, desc, and } from 'drizzle-orm'
@@ -69,7 +70,7 @@ async function load(db: WriteTransaction) {
     db.select().from(reconciliations),
   ])
   return {
-    w: {
+    w: portableRows({
       accounts: a,
       transactions: t.filter((t) => !t.deletedAt),
       deletedTransactions: t.filter((t) => !!t.deletedAt),
@@ -85,7 +86,7 @@ async function load(db: WriteTransaction) {
       events: [],
       shopping: [],
       isDemo: false,
-    } as Workspace,
+    }) as Workspace,
     reconciliations: r as Reconciliation[],
   }
 }

@@ -142,7 +142,11 @@ export async function previewStatement(data: z.infer<typeof importSchema>) {
   )
 }
 const snapshot = (row: Record<string, unknown>) =>
-  JSON.parse(JSON.stringify(row)) as Record<string, unknown>
+  JSON.parse(
+    JSON.stringify(
+      Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'workspaceId')),
+    ),
+  ) as Record<string, unknown>
 const canonical = (row: Record<string, unknown>) =>
   JSON.stringify(Object.fromEntries(Object.entries(row).sort(([a], [b]) => a.localeCompare(b))))
 export async function applyStatement(

@@ -1,3 +1,4 @@
+import { portableRows } from './portable'
 import { goalFundingSchema, fundingOf, goalFundingIssues } from './goals'
 import { budgetChangeSchema, reconciliationSchema, periodClosureSchema } from './periods'
 import { categorySchema, withCategoryIds } from './categories'
@@ -28,7 +29,7 @@ import {
 type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-export const backupVersion = 10
+export const backupVersion = 11
 export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
@@ -100,7 +101,7 @@ export function upgradeBackup(input: unknown): unknown {
               if (typeof id === 'string') refunds.set(id, p.transactionId)
   if (
     isRow(input) &&
-    [1, 2, 3, 4, 5, 6, 7, 8, 9].includes(input.version as number) &&
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(input.version as number) &&
     isRow(upgraded)
   )
     return withCategoryIds({
@@ -162,7 +163,7 @@ export function upgradeBackup(input: unknown): unknown {
           : g,
       ),
       version: backupVersion,
-      commandHistory: [5, 6, 7, 8, 9].includes(input.version as number)
+      commandHistory: [5, 6, 7, 8, 9, 10].includes(input.version as number)
         ? upgraded.commandHistory
         : [],
     })
@@ -637,12 +638,13 @@ export type Backup = z.infer<typeof backupObject>
 export function createBackup(
   workspace: Workspace & { commandHistory?: CommandHistoryEntry[] },
 ): Backup {
-  const { revision: _revision, ...data } = workspace
+  const { revision: _revision, workspaceId: _workspaceId, ...source } = workspace
+  const data = portableRows(source)
   return withCategoryIds({
     timeZone: workspace.timeZone || 'Europe/Moscow',
     ...data,
     goals: data.goals.map((g) => ({ ...g, funding: fundingOf(g) })),
-    commandHistory: workspace.commandHistory || [],
+    commandHistory: data.commandHistory || [],
     version: backupVersion,
     exportedAt: new Date().toISOString(),
   }) as Backup

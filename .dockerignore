@@ -1,0 +1,11 @@
+node_modules
+.nuxt
+.output
+.git
+.data
+.env*
+.claude
+artifacts
+coverage
+server-backups
+*.log

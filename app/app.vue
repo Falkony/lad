@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { ru } from '@nuxt/ui/locale'
 const { refresh, toast, pending } = useWorkspace()
-function refreshVisible() {
-  if (!document.hidden && !pending.value) refresh()
+async function refreshVisible() {
+  if (!document.hidden && !pending.value) {
+    const auth = useAuth()
+    await auth.refresh()
+    if (auth.state.value.authenticated) await refresh()
+    else if (auth.state.value.enabled) await navigateTo('/login')
+  }
 }
-onMounted(() => {
-  refresh()
+onMounted(async () => {
+  const auth = useAuth()
+  await auth.refresh()
+  if (auth.state.value.authenticated) await refresh()
   window.addEventListener('focus', refreshVisible)
   document.addEventListener('visibilitychange', refreshVisible)
 })

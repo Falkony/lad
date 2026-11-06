@@ -1,8 +1,10 @@
 import { getDb } from '../db'
 import { commandSchema, executeCommand } from '../modules/workspace'
+import { readJSON } from '../utils/read-json'
+import type { AuthActor } from '../../shared/auth'
 export default defineEventHandler(async (event) => {
   await getDb()
-  const body = await readBody(event)
+  const body = await readJSON(event)
   const parsed = commandSchema.safeParse(body)
   if (!parsed.success)
     throw createError({
@@ -11,7 +13,7 @@ export default defineEventHandler(async (event) => {
       data: { issues: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })) },
     })
   try {
-    return await executeCommand(parsed.data)
+    return await executeCommand(parsed.data, event.context.auth as AuthActor | undefined)
   } catch (error: any) {
     if (error.statusCode) throw error
     const cause = error.cause || error

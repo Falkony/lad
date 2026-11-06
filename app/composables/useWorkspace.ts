@@ -78,6 +78,11 @@ export function useWorkspace() {
         err?.data?.message ||
         'Не удалось сохранить изменения'
       const status = err?.statusCode || err?.response?.status
+      if (status === 401) {
+        useAuth().invalidate()
+        await useAuth().refresh()
+        await navigateTo('/login')
+      }
       // The local copy is stale: reload it so the user sees the current state before retrying.
       if (status === 404 || status === 409) await refresh()
       notify(message)
@@ -99,5 +104,11 @@ export function useWorkspace() {
       await refresh()
     }
   }
-  return { workspace, loading, pending, error, toast, refresh, command, notify, setPeriod }
+  function clear() {
+    workspace.value = empty()
+    error.value = ''
+    toast.value = ''
+    refreshVersion.value++
+  }
+  return { workspace, loading, pending, error, toast, refresh, command, notify, setPeriod, clear }
 }

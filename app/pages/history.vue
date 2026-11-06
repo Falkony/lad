@@ -65,6 +65,7 @@ function summary(entry: CommandHistoryEntry) {
           <p v-if="summary(entry)">{{ summary(entry) }}</p>
         </div>
         <div class="history-meta">
+          <span v-if="entry.actorName">{{ entry.actorName }}</span>
           <time :datetime="entry.createdAt">{{
             new Date(entry.createdAt).toLocaleString('ru-RU')
           }}</time>
