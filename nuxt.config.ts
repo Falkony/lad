@@ -4,7 +4,12 @@ export default defineNuxtConfig({
   ui: { fonts: false },
   nitro: { esbuild: { options: { target: 'es2022' } } },
   vite: { build: { target: 'es2022' } },
-  css: ['~/assets/css/main.css', '~/assets/css/iteration-two.css', '~/assets/css/planning.css'],
+  css: [
+    '~/assets/css/main.css',
+    '~/assets/css/iteration-two.css',
+    '~/assets/css/planning.css',
+    '~/assets/css/forecast.css',
+  ],
   ssr: false,
   devtools: { enabled: false },
   // The recurring payments page became the unified plans page in iteration 4a.

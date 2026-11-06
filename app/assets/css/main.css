@@ -5,6 +5,8 @@
   --font-sans: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 :root {
+  /* The app has only a light theme: native controls must not follow a dark OS theme. */
+  color-scheme: light;
   --ink: #28342d;
   --muted: #899087;
   --green: #315541;

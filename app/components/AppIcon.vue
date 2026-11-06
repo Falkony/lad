@@ -47,6 +47,7 @@ import {
   ChartPie,
   Copy,
   Pause,
+  TrendingUp,
 } from '@lucide/vue'
 const props = withDefaults(defineProps<{ name: string; size?: number }>(), { size: 20 })
 const icons: Record<string, any> = {
@@ -98,6 +99,7 @@ const icons: Record<string, any> = {
   budget: ChartPie,
   copy: Copy,
   pause: Pause,
+  forecast: TrendingUp,
 }
 </script>
 <template>

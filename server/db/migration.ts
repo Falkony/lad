@@ -1,6 +1,7 @@
 import { repairImportOrigin } from './repair-import-origin'
 import { planningMigration } from './planning-migration'
 import { unifiedPlanMigration } from './unified-plan-migration'
+import { forecastMigration } from './forecast-migration'
 
 // Bootstrap for new databases followed by guarded, versioned upgrades for existing ones.
 export const migration = `
@@ -45,5 +46,6 @@ END $$;
 ${repairImportOrigin}
 ${planningMigration}
 ${unifiedPlanMigration}
+${forecastMigration}
 COMMIT;
 `

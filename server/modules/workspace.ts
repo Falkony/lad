@@ -196,7 +196,11 @@ export async function executeCommand(command: Command) {
     let result: CommandResult = { ok: true }
     switch (command.op) {
       case 'account.create':
-        await db.insert(accounts).values({ id: crypto.randomUUID(), ...command.data })
+        await db.insert(accounts).values({
+          id: crypto.randomUUID(),
+          ...command.data,
+          inForecast: command.data.inForecast ?? command.data.kind !== 'savings',
+        })
         break
       case 'account.update': {
         const [account] = await db.select().from(accounts).where(eq(accounts.id, command.id))
@@ -591,6 +595,7 @@ async function seedDemo() {
         kind: 'savings',
         openingBalance: '21000000',
         color: 'blue',
+        inForecast: false,
       },
       { id: cash, name: 'Наличные', kind: 'cash', openingBalance: '850000', color: 'sand' },
     ])

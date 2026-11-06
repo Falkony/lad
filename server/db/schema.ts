@@ -14,6 +14,7 @@ export const accounts = pgTable('accounts', {
   bankName: text('bank_name').notNull().default(''),
   last4: text('last4').notNull().default(''),
   archived: boolean('archived').notNull().default(false),
+  inForecast: boolean('in_forecast').notNull().default(true),
 })
 export const transactions = pgTable(
   'transactions',

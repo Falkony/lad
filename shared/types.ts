@@ -20,6 +20,8 @@ export interface Account {
   bankName: string
   last4: string
   archived: boolean
+  /** Takes part in the money forecast; savings stay outside by default. */
+  inForecast: boolean
 }
 export interface Transaction {
   id: string

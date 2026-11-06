@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Account } from '../../shared/types'
 import { accountBalance, money, sumAmounts } from '../../shared/money'
-defineProps<{ full?: boolean }>()
+const props = defineProps<{ full?: boolean }>()
 const { workspace: w, command, pending } = useWorkspace()
 const open = ref(false),
   editing = ref<Account | null>(null),
@@ -9,7 +9,18 @@ const open = ref(false),
   action = ref<{ account: Account; kind: 'archive' | 'delete' } | null>(null),
   filter = ref('active')
 const active = computed(() => w.value.accounts.filter((a) => !a.archived)),
-  archived = computed(() => w.value.accounts.filter((a) => a.archived))
+  archived = computed(() => w.value.accounts.filter((a) => a.archived)),
+  // Savings and reserves: active accounts that stay outside the money forecast.
+  outside = computed(() => active.value.filter((a) => !a.inForecast))
+const shown = computed(() =>
+  !props.full
+    ? active.value.slice(0, 3)
+    : filter.value === 'archived'
+      ? archived.value
+      : filter.value === 'outside'
+        ? outside.value
+        : active.value,
+)
 const balance = (account: Account) => accountBalance(account, w.value.transactions)
 const total = (accounts: Account[]) => sumAmounts(accounts.map(balance))
 function edit(account?: Account) {
@@ -55,10 +66,11 @@ async function confirmAction() {
   <section class="accounts-section">
     <div v-if="full" class="summary-strip">
       <div>
-        <span>Действующие счета</span><strong>{{ money(total(active)) }}</strong>
+        <span>Для текущих трат</span
+        ><strong>{{ money(total(active.filter((a) => a.inForecast))) }}</strong>
       </div>
       <div>
-        <span>В архиве</span><strong>{{ money(total(archived)) }}</strong>
+        <span>Накопления и резервы</span><strong>{{ money(total(outside)) }}</strong>
       </div>
       <div>
         <span>Общий остаток</span><strong>{{ money(total(w.accounts)) }}</strong>
@@ -80,16 +92,15 @@ async function confirmAction() {
     <div v-if="full" class="account-tabs">
       <button :class="{ selected: filter === 'active' }" @click="filter = 'active'">
         Действующие · {{ active.length }}</button
+      ><button :class="{ selected: filter === 'outside' }" @click="filter = 'outside'">
+        Накопления · {{ outside.length }}</button
       ><button :class="{ selected: filter === 'archived' }" @click="filter = 'archived'">
         Архив · {{ archived.length }}
       </button>
     </div>
     <div class="managed-accounts-grid">
       <article
-        v-for="account in (full && filter === 'archived' ? archived : active).slice(
-          0,
-          full ? undefined : 3,
-        )"
+        v-for="account in shown"
         :key="account.id"
         class="managed-account-card"
         :class="account.color"
@@ -139,7 +150,9 @@ async function confirmAction() {
         <h3>{{ account.name }}</h3>
         <strong class="managed-account-balance">{{ money(balance(account)) }}</strong>
         <div class="managed-account-footer">
-          <span>{{ account.archived ? 'В архиве' : 'RUB' }}</span
+          <span>{{
+            account.archived ? 'В архиве' : account.inForecast ? 'RUB' : 'RUB · вне прогноза'
+          }}</span
           ><button
             class="text-button account-edit-button"
             :aria-label="`Редактировать счёт ${account.name}`"
@@ -150,18 +163,21 @@ async function confirmAction() {
         </div>
       </article>
     </div>
-    <div
-      v-if="!(full && filter === 'archived' ? archived : active).length"
-      class="empty-state panel"
-    >
+    <div v-if="!shown.length" class="empty-state panel">
       <AppIcon name="wallet" :size="30" /><strong>{{
-        full && filter === 'archived' ? 'Архив пуст' : 'Пока нет действующих счетов'
+        full && filter === 'archived'
+          ? 'Архив пуст'
+          : full && filter === 'outside'
+            ? 'Все счета участвуют в прогнозе'
+            : 'Пока нет действующих счетов'
       }}</strong>
       <p>
         {{
           full && filter === 'archived'
             ? 'Здесь сохраняется история закрытых счетов.'
-            : 'Добавьте карту, наличные или накопления.'
+            : full && filter === 'outside'
+              ? 'Отключите «Учитывать в прогнозе» у накопительного счёта, чтобы резерв не считался деньгами на текущие траты.'
+              : 'Добавьте карту, наличные или накопления.'
         }}
       </p>
       <button v-if="filter !== 'archived' || !full" class="button secondary" @click="edit()">

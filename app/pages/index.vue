@@ -2,6 +2,7 @@
 import { accountBalance, money, sumAmounts, localDate } from '../../shared/money'
 import { projectPlans, overduePlans, isOpen, addDays } from '../../shared/planning'
 import type { ProjectedOccurrence } from '../../shared/planning-types'
+import { forecast, untilNextIncome } from '../../shared/forecast'
 
 const { workspace: w, loading, pending, command } = useWorkspace()
 const operationOpen = ref(false)
@@ -26,6 +27,9 @@ const balance = computed(() =>
   sumAmounts(w.value.accounts.map((a) => accountBalance(a, w.value.transactions))),
 )
 const overdueCount = computed(() => overduePlans(w.value, localDate()).length)
+// Long enough to reach a monthly income from any day of the month.
+const forecastDays = 45
+const outlook = computed(() => forecast(w.value, localDate(), forecastDays))
 const upcoming = computed(() =>
   [
     ...w.value.events.map((e) => ({ ...e, plan: null as ProjectedOccurrence | null })),
@@ -180,6 +184,42 @@ function progress(saved: string, target: string) {
         ><span>без переводов между счетами</span>
       </div>
     </article>
+  </section>
+  <section class="panel home-forecast" aria-label="Прогноз денег">
+    <div class="panel-heading">
+      <div>
+        <h2>Хватит ли денег</h2>
+        <p>Прогноз на {{ forecastDays }} дней по введённым поступлениям и платежам</p>
+      </div>
+      <NuxtLink to="/forecast" class="text-button"
+        >Весь прогноз <AppIcon name="arrow" :size="15"
+      /></NuxtLink>
+    </div>
+    <div class="home-forecast-body">
+      <ForecastNextIncome :result="outlook" :days="forecastDays" />
+      <dl class="forecast-next-facts home-forecast-facts">
+        <div>
+          <dt>Сейчас на счетах прогноза</dt>
+          <dd>{{ money(outlook.total.start) }}</dd>
+        </div>
+        <div v-if="outlook.total.min !== untilNextIncome(outlook)?.lowest">
+          <dt>Минимум за {{ forecastDays }} дней · {{ dateLabel(outlook.total.minDate) }}</dt>
+          <dd :class="{ 'danger-text': BigInt(outlook.total.min) < 0n }">
+            {{ money(outlook.total.min) }}
+          </dd>
+        </div>
+        <div v-if="outlook.total.deficitDate || outlook.accounts.some((a) => a.deficitDate)">
+          <dt>Внимание</dt>
+          <dd class="danger-text">
+            {{
+              outlook.total.deficitDate
+                ? `Денег не хватит ${dateLabel(outlook.total.deficitDate)}`
+                : `Минус на счёте ${outlook.accounts.find((a) => a.deficitDate)!.account.name}`
+            }}
+          </dd>
+        </div>
+      </dl>
+    </div>
   </section>
   <AccountSection />
   <BudgetOverview :month="monthKey" />

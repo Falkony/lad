@@ -32,6 +32,8 @@ export const accountSchema = z.object({
     .string()
     .regex(/^(\d{4})?$/, 'Укажите четыре цифры')
     .default(''),
+  /** Omitted: savings stay outside the forecast on create, the stored value is kept on update. */
+  inForecast: z.boolean().optional(),
 })
 export const transactionSchema = z
   .object({

@@ -11,8 +11,17 @@ const form = reactive({
   color: 'green',
   bankName: '',
   last4: '',
+  inForecast: true,
 })
 const error = ref('')
+// Until the user decides, savings stay outside the forecast and other accounts take part.
+const forecastTouched = ref(false)
+watch(
+  () => form.kind,
+  (kind) => {
+    if (!props.account && !forecastTouched.value) form.inForecast = kind !== 'savings'
+  },
+)
 watch(
   () => props.account,
   (account) => {
@@ -20,8 +29,17 @@ watch(
       form,
       account
         ? { ...account, openingBalance: toMajor(account.openingBalance) }
-        : { name: '', kind: 'card', openingBalance: '0', color: 'green', bankName: '', last4: '' },
+        : {
+            name: '',
+            kind: 'card',
+            openingBalance: '0',
+            color: 'green',
+            bankName: '',
+            last4: '',
+            inForecast: true,
+          },
     )
+    forecastTouched.value = false
     error.value = ''
   },
   { immediate: true },
@@ -74,6 +92,14 @@ async function save() {
         maxlength="4"
         placeholder="1234"
       /><span class="form-hint">Полный номер карты не нужен.</span></label
+    >
+    <label class="checkbox-row"
+      ><input v-model="form.inForecast" type="checkbox" @change="forecastTouched = true" /><span
+        >Учитывать в прогнозе<small
+          >Деньги этого счёта можно тратить на текущие платежи. Накопления и резервы обычно не
+          учитываются: переводы на них прогноз покажет как отток.</small
+        ></span
+      ></label
     >
     <fieldset class="color-picker">
       <legend>Цвет</legend>

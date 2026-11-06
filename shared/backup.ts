@@ -17,6 +17,9 @@ import {
   occurrenceSchema,
 } from './planning-schemas'
 
+type Row = Record<string, unknown>
+const isRow = (value: unknown): value is Row =>
+  !!value && typeof value === 'object' && !Array.isArray(value)
 export const backupVersion = 4
 const timestamp = z
   .string()
@@ -26,7 +29,18 @@ const timestamp = z
       /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/.test(value) && Number.isFinite(Date.parse(value)),
     'Некорректное время записи',
   )
-const account = accountSchema.extend({ id: z.uuid(), archived: z.boolean().default(false) })
+// Copies made before migration 7 have no forecast flag: apply the same default as the migration.
+const account = z.preprocess(
+  (row) =>
+    isRow(row) && row.inForecast === undefined
+      ? { ...row, inForecast: row.kind !== 'savings' }
+      : row,
+  accountSchema.extend({
+    id: z.uuid(),
+    archived: z.boolean().default(false),
+    inForecast: z.boolean(),
+  }),
+)
 const transaction = z
   .object({
     ...transactionSchema.shape,
@@ -56,10 +70,6 @@ const transaction = z
         path: ['toAccountId'],
       })
   })
-
-type Row = Record<string, unknown>
-const isRow = (value: unknown): value is Row =>
-  !!value && typeof value === 'object' && !Array.isArray(value)
 const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 /**
  * Copies of versions 1–3 stored recurring payments under other names and kept one-off payments

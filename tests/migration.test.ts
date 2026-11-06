@@ -14,7 +14,7 @@ it('upgrades an existing obligation table without losing its records', async () 
       (await db.query<{ remaining: string }>("SELECT remaining FROM obligations WHERE id = 'old'"))
         .rows[0]!.remaining,
     ).toBe('0')
-    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(6)
+    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(7)
   } finally {
     await db.close()
   }

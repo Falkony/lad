@@ -3,6 +3,7 @@ import { money, toMinor, localDate, sumAmounts } from '../../shared/money'
 import { addDays, monthRange, projectPlans, isOpen } from '../../shared/planning'
 import type { CalendarEvent } from '../../shared/types'
 import type { ProjectedOccurrence } from '../../shared/planning-types'
+import { balanceAt, forecast } from '../../shared/forecast'
 import { z } from 'zod'
 const { workspace: w, command, pending } = useWorkspace()
 const now = new Date(),
@@ -102,6 +103,24 @@ const days = computed(() => {
       events: calendarEvents.value.filter((e) => e.date === date),
     }
   })
+})
+// Financial view: recorded balance for past days, expected balance from today on.
+const moneyView = ref(false)
+const forecastLimit = 400
+const dayBalances = computed(() => {
+  const result = new Map<string, { value: string; expected: boolean }>()
+  if (!moneyView.value) return result
+  const today = localDate(),
+    { from, to } = calendarRange.value
+  for (let date = from; date <= to && date < today; date = addDays(date, 1))
+    result.set(date, { value: balanceAt(w.value, date), expected: false })
+  if (to >= today) {
+    const span = Math.round((Date.parse(to) - Date.parse(today)) / 86400000)
+    if (span <= forecastLimit)
+      for (const day of forecast(w.value, today, span).days)
+        if (day.date >= from) result.set(day.date, { value: day.total, expected: true })
+  }
+  return result
 })
 const selectedEvents = computed(() => calendarEvents.value.filter((e) => e.date === selected.value))
 const selectedTitle = computed(() =>
@@ -225,7 +244,17 @@ async function remove() {
             <AppIcon name="right" :size="17" />
           </button>
         </div>
-        <button class="button secondary small-button" @click="today">Сегодня</button>
+        <div class="calendar-toolbar-actions">
+          <button
+            class="button secondary small-button"
+            :class="{ active: moneyView }"
+            :aria-pressed="moneyView"
+            @click="moneyView = !moneyView"
+          >
+            <AppIcon name="forecast" :size="15" />Остатки
+          </button>
+          <button class="button secondary small-button" @click="today">Сегодня</button>
+        </div>
       </div>
       <div class="calendar-weekdays">
         <span v-for="d in ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']" :key="d">{{ d }}</span>
@@ -241,6 +270,14 @@ async function remove() {
           @click="selected = day.date"
         >
           <span class="day-number">{{ day.day }}</span
+          ><span
+            v-if="dayBalances.get(day.date)"
+            class="calendar-balance"
+            :class="{
+              expected: dayBalances.get(day.date)!.expected,
+              negative: BigInt(dayBalances.get(day.date)!.value) < 0n,
+            }"
+            >{{ money(dayBalances.get(day.date)!.value, true) }}</span
           ><span
             v-for="event in day.events.slice(0, 2)"
             :key="event.id"
@@ -260,6 +297,13 @@ async function remove() {
         <div>
           <span class="eyebrow">ПЛАН НА ДЕНЬ</span>
           <h2>{{ selectedTitle }}</h2>
+          <p v-if="dayBalances.get(selected)" class="calendar-day-balance">
+            {{ dayBalances.get(selected)!.expected ? 'Ожидаемый остаток' : 'Остаток' }}
+            на конец дня:
+            <strong :class="{ 'danger-text': BigInt(dayBalances.get(selected)!.value) < 0n }">{{
+              money(dayBalances.get(selected)!.value)
+            }}</strong>
+          </p>
         </div>
       </div>
       <template v-for="event in selectedEvents" :key="event.id"
