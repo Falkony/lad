@@ -31,6 +31,7 @@ const sections = [
   { key: 'plans', label: 'Планы поступлений и платежей' },
   { key: 'planVersions', label: 'История настроек планов' },
   { key: 'planOccurrences', label: 'Отметки дат планов' },
+  { key: 'commandHistory', label: 'История изменений' },
 ] as const
 async function updatePreview() {
   await refresh()
@@ -224,7 +225,8 @@ async function restore() {
             <tbody>
               <tr v-for="section in sections" :key="section.key">
                 <td>{{ section.label }}</td>
-                <td>{{ w[section.key].length }}</td>
+                <td v-if="section.key === 'commandHistory'">Заменяется из копии</td>
+                <td v-else>{{ w[section.key].length }}</td>
                 <td>{{ backup[section.key].length }}</td>
               </tr>
             </tbody>
@@ -245,7 +247,9 @@ async function restore() {
           <form class="form-stack" @submit.prevent="restore">
             <p class="restore-notice">
               Восстановление полностью заменит текущие записи содержимым копии, включая архив счетов
-              и удалённые операции. При ошибке текущее пространство сохранится целиком.
+              и удалённые операции. История изменений заменится историей из файла; для копий без
+              истории она начнётся с записи о восстановлении. При ошибке текущее пространство
+              сохранится целиком.
             </p>
             <label
               >Введите ВОССТАНОВИТЬ для подтверждения<input
@@ -269,7 +273,7 @@ async function restore() {
       <p>
         Счета и их начальные остатки, операции и корректировки, импортные идентификаторы, цели,
         обязательства и история погашений, календарь, список покупок, бюджеты, планы, их версии и
-        отметки дат.
+        отметки дат, история изменений.
       </p>
       <p>
         Копия содержит финансовые данные в обычном JSON-файле. Храните её там, где вам удобно

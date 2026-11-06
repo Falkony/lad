@@ -41,6 +41,7 @@ const links = [
   { to: '/calendar', label: 'Календарь', icon: 'calendar' },
   { to: '/shopping', label: 'Список покупок', icon: 'shopping' },
   { to: '/backups', label: 'Резервные копии', icon: 'file' },
+  { to: '/history', label: 'История изменений', icon: 'file' },
 ]
 /** The section of the page, nested pages included (/obligations/… is «Кредиты и долги»). */
 const current = computed(() =>
@@ -172,7 +173,7 @@ async function reset() {
     <AppDialog
       v-model="resetOpen"
       title="Очистить пространство"
-      description="Все записи будут удалены с этого компьютера. Сначала сохраните JSON-экспорт, если данные нужны."
+      description="Записи и прежняя история изменений будут очищены. Останется запись об очистке. Перед заменой автоматически сохранится копия; файлы копий не удаляются."
       ><form class="form-stack" @submit.prevent="reset">
         <label
           >Введите УДАЛИТЬ для подтверждения<input

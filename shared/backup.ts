@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { commandHistoryEntrySchema, type CommandHistoryEntry } from './command-history'
 import {
   accountSchema,
   transactionSchema,
@@ -21,7 +22,7 @@ import {
 type Row = Record<string, unknown>
 const isRow = (value: unknown): value is Row =>
   !!value && typeof value === 'object' && !Array.isArray(value)
-export const backupVersion = 4
+export const backupVersion = 5
 export const backupMaxBytes = 25 * 1024 * 1024
 const timestamp = z
   .string()
@@ -79,7 +80,10 @@ const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
  * anything malformed is passed through untouched for the schema to report.
  */
 export function upgradeBackup(input: unknown): unknown {
-  return upgradeObligations(upgradePlans(input))
+  const upgraded = upgradeObligations(upgradePlans(input))
+  if (isRow(input) && [1, 2, 3, 4].includes(input.version as number) && isRow(upgraded))
+    return { ...upgraded, version: backupVersion, commandHistory: [] }
+  return upgraded
 }
 /**
  * Copies made before migration 9 store the current balance of an obligation: it becomes the
@@ -217,6 +221,7 @@ const backupObject = z
     plans: z.array(plan).max(20000).default([]),
     planVersions: z.array(planVersionSchema).max(50000).default([]),
     planOccurrences: z.array(occurrenceSchema).max(50000).default([]),
+    commandHistory: z.array(commandHistoryEntrySchema).max(100000),
   })
   .superRefine((backup, ctx) => {
     for (const key of [
@@ -230,6 +235,7 @@ const backupObject = z
       'plans',
       'planVersions',
       'planOccurrences',
+      'commandHistory',
     ] as const) {
       const ids = new Set<string>()
       for (const row of backup[key]) {
@@ -241,6 +247,18 @@ const backupObject = z
           })
         ids.add(row.id)
       }
+    }
+    const revisions = new Set<string>()
+    for (const entry of backup.commandHistory) {
+      if (!/^[1-9]\d{0,19}$/.test(entry.revision)) continue
+      const revision = BigInt(entry.revision).toString()
+      if (revisions.has(revision))
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Повторяющаяся ревизия журнала',
+          path: ['commandHistory'],
+        })
+      revisions.add(revision)
     }
     const accounts = new Set(backup.accounts.map((a) => a.id)),
       ids = new Set<string>(),
@@ -374,7 +392,14 @@ export const backupSchema = z.preprocess(upgradeBackup, backupObject)
 export type Backup = z.infer<typeof backupObject>
 // Export must never fail because of one unexpected row: a backup that the restore preview
 // flags is better than no backup at all. Full validation happens on restore.
-export function createBackup(workspace: Workspace): Backup {
+export function createBackup(
+  workspace: Workspace & { commandHistory?: CommandHistoryEntry[] },
+): Backup {
   const { revision: _revision, ...data } = workspace
-  return { ...data, version: backupVersion, exportedAt: new Date().toISOString() } as Backup
+  return {
+    ...data,
+    commandHistory: workspace.commandHistory || [],
+    version: backupVersion,
+    exportedAt: new Date().toISOString(),
+  } as Backup
 }

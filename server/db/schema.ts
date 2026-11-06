@@ -1,4 +1,14 @@
-import { pgTable, text, boolean, integer, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core'
+import {
+  pgTable,
+  text,
+  boolean,
+  integer,
+  timestamp,
+  uniqueIndex,
+  index,
+  jsonb,
+} from 'drizzle-orm/pg-core'
+import type { CommandHistoryEntry } from '../../shared/command-history'
 
 // Money is an integer minor-unit string at the API boundary. PostgreSQL numeric(16,0)
 // preserves it exactly without a lossy conversion to JavaScript number.
@@ -109,6 +119,14 @@ export const settings = pgTable('settings', {
 export const workspaceGuard = pgTable('workspace_guard', {
   id: integer('id').primaryKey(),
   revision: numeric('revision', { precision: 20, scale: 0 }).notNull().default('0'),
+})
+export const commandHistory = pgTable('command_history', {
+  id: text('id').primaryKey(),
+  revision: numeric('revision', { precision: 20, scale: 0 }).notNull().unique(),
+  createdAt: timestamp('created_at', { mode: 'string', withTimezone: true }).notNull().defaultNow(),
+  operation: text('operation').notNull(),
+  payload: jsonb('payload').$type<CommandHistoryEntry['payload']>().notNull(),
+  result: jsonb('result').$type<CommandHistoryEntry['result']>().notNull(),
 })
 export const budgets = pgTable(
   'budgets',

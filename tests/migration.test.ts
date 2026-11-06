@@ -17,7 +17,7 @@ it('upgrades an existing obligation table without losing its records', async () 
         )
       ).rows[0]!.opening_balance,
     ).toBe('0')
-    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(9)
+    expect((await db.query('SELECT version FROM lad_migrations')).rows).toHaveLength(10)
   } finally {
     await db.close()
   }

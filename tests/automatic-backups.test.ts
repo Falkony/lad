@@ -213,7 +213,8 @@ describe('automatic backups', () => {
     const saved = backupSchema.parse(
       JSON.parse(await readFile(join(status.directory, status.files[0]!.name), 'utf8')),
     )
-    expect(saved.version).toBe(4)
+    expect(saved.version).toBe(5)
+    expect(saved.commandHistory.some((entry) => entry.operation === 'demo.load')).toBe(true)
     expect(saved.obligationEntries.length).toBeGreaterThan(0)
     expect(saved.plans.length).toBeGreaterThan(0)
     expect(saved.planVersions.length).toBeGreaterThan(0)
@@ -243,5 +244,8 @@ describe('automatic backups', () => {
     }
     expect((await source.readWorkspace()).revision).toBe(original.revision)
     expect(restored.deletedTransactions[0]!.importAccountId).toBe(archived.id)
+    const history = (await target.readWorkspace(true)).commandHistory!
+    expect(history).toHaveLength(saved.commandHistory.length + 1)
+    expect(history.at(-1)!.operation).toBe('workspace.restore')
   })
 })

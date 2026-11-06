@@ -4,6 +4,7 @@ import { unifiedPlanMigration } from './unified-plan-migration'
 import { forecastMigration } from './forecast-migration'
 import { payDaysMigration } from './pay-days-migration'
 import { obligationMigration } from './obligation-migration'
+import { commandHistoryMigration } from './command-history-migration'
 
 // Bootstrap for new databases followed by guarded, versioned upgrades for existing ones.
 export const migration = `
@@ -51,5 +52,6 @@ ${unifiedPlanMigration}
 ${forecastMigration}
 ${payDaysMigration}
 ${obligationMigration}
+${commandHistoryMigration}
 COMMIT;
 `

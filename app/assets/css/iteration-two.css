@@ -273,6 +273,45 @@
 .automatic-backups {
   margin-bottom: 26px;
 }
+.history-panel {
+  margin-top: 20px;
+  padding: 20px;
+}
+.history-list {
+  list-style: none;
+  padding: 0;
+}
+.history-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.history-list p,
+.history-meta {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.history-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.history-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .automatic-backups-body {
   padding: 4px 23px 23px;
   font-size: 12px;

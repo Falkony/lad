@@ -1,7 +1,7 @@
 import { and, eq, desc, sql, or, inArray, isNull, isNotNull } from 'drizzle-orm'
 import { createError } from 'h3'
 import { z } from 'zod'
-import { getDb } from '../db'
+import { getDb, type WriteTransaction } from '../db'
 import {
   accounts,
   transactions,
@@ -12,6 +12,7 @@ import {
   obligationEntries,
   settings,
   workspaceGuard,
+  commandHistory,
   budgets,
   plans,
   planVersions,
@@ -47,11 +48,16 @@ import {
 import { firstDueDate, suggestSplit } from '../../shared/obligations'
 import { shiftMonth } from '../../shared/planning'
 import { automaticBackupOptions, createAutomaticBackups } from './automatic-backups'
+import { finishCommand } from './command-history'
+import type { CommandHistoryEntry } from '../../shared/command-history'
 
 let automaticBackups: ReturnType<typeof createAutomaticBackups> | undefined
 let commandQueue = Promise.resolve()
 export function getWorkspaceBackups() {
-  return (automaticBackups ??= createAutomaticBackups(readWorkspace, automaticBackupOptions()))
+  return (automaticBackups ??= createAutomaticBackups(
+    () => readWorkspace(true),
+    automaticBackupOptions(),
+  ))
 }
 
 /** Throws 404 when an update/delete touched nothing, so a stale UI does not report success. */
@@ -60,7 +66,9 @@ export function found<T>(rows: T[], message: string): T[] {
   return rows
 }
 
-export async function readWorkspace(): Promise<Workspace> {
+export async function readWorkspace(
+  includeHistory = false,
+): Promise<Workspace & { commandHistory?: CommandHistoryEntry[] }> {
   const client = await getDb()
   return client.transaction(
     async (db) => {
@@ -100,6 +108,14 @@ export async function readWorkspace(): Promise<Workspace> {
         plans: r,
         planVersions: v,
         planOccurrences: p,
+        ...(includeHistory
+          ? {
+              commandHistory: await db
+                .select()
+                .from(commandHistory)
+                .orderBy(commandHistory.revision),
+            }
+          : {}),
       } as Workspace
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -212,10 +228,6 @@ async function executeBackedUpCommand(command: Command) {
 }
 
 async function executeWorkspaceCommand(command: Command) {
-  if (command.op === 'demo.load') {
-    await seedDemo()
-    return { ok: true }
-  }
   const client = await getDb()
   return client.transaction(async (db) => {
     const [guard] = await db
@@ -224,6 +236,10 @@ async function executeWorkspaceCommand(command: Command) {
       .where(eq(workspaceGuard.id, 1))
       .for('update')
     const revisionBefore = guard!.revision
+    if (command.op === 'demo.load') {
+      await seedDemo(db)
+      return finishCommand(db, command, { ok: true }, revisionBefore)
+    }
     if (isPlanningCommand(command)) {
       // The schedule of an obligation is edited through the obligation itself.
       if ('id' in command && command.id && command.op.startsWith('plan.')) {
@@ -239,11 +255,7 @@ async function executeWorkspaceCommand(command: Command) {
       if (command.op === 'occurrence.confirm' && result.transactionId && !result.alreadyPaid)
         await afterPlanConfirm(db, command.planId, result.transactionId)
       await syncObligations(db, revisionBefore)
-      await db
-        .update(workspaceGuard)
-        .set({ revision: sql`${workspaceGuard.revision} + 1` })
-        .where(eq(workspaceGuard.id, 1))
-      return result
+      return finishCommand(db, command, result, revisionBefore)
     }
     // Full-object edits overwrite every field: reject forms opened before another change.
     if (
@@ -260,11 +272,7 @@ async function executeWorkspaceCommand(command: Command) {
     if (isObligationCommand(command)) {
       result = await executeObligationCommand(db, command, revisionBefore)
       await syncObligations(db, revisionBefore)
-      await db
-        .update(workspaceGuard)
-        .set({ revision: sql`${workspaceGuard.revision} + 1` })
-        .where(eq(workspaceGuard.id, 1))
-      return result
+      return finishCommand(db, command, result, revisionBefore)
     }
     switch (command.op) {
       case 'account.create':
@@ -565,6 +573,7 @@ async function executeWorkspaceCommand(command: Command) {
             message: 'Пространство изменилось после предпросмотра. Загрузите копию заново.',
           })
         const backup = command.backup
+        await db.delete(commandHistory)
         await db.delete(obligationEntries)
         await db.delete(obligations)
         await db.delete(planOccurrences)
@@ -595,11 +604,14 @@ async function executeWorkspaceCommand(command: Command) {
           await db.insert(planOccurrences).values(rows)
         for (const rows of chunks(backup.obligationEntries))
           await db.insert(obligationEntries).values(rows)
+        for (const rows of chunks(backup.commandHistory))
+          await db.insert(commandHistory).values(rows)
         await db.insert(settings).values({ key: 'demo', value: String(backup.isDemo) })
         break
       }
       case 'workspace.reset': {
         await db.transaction(async (tx) => {
+          await tx.delete(commandHistory)
           await tx.delete(obligationEntries)
           await tx.delete(obligations)
           await tx.delete(planOccurrences)
@@ -618,335 +630,323 @@ async function executeWorkspaceCommand(command: Command) {
     }
     // Deleting or restoring a transaction changes the balance of an obligation it repaid.
     await syncObligations(db, revisionBefore)
-    await db
-      .update(workspaceGuard)
-      .set({ revision: sql`${workspaceGuard.revision} + 1` })
-      .where(eq(workspaceGuard.id, 1))
-    return result
+    return finishCommand(db, command, result, revisionBefore)
   })
 }
 
-async function seedDemo() {
-  const db = await getDb()
-  await db.transaction(async (tx) => {
-    await tx.select().from(workspaceGuard).where(eq(workspaceGuard.id, 1)).for('update')
-    const populated = await Promise.all([
-      tx.select().from(accounts),
-      tx.select().from(transactions),
-      tx.select().from(goals),
-      tx.select().from(events),
-      tx.select().from(shopping),
-      tx.select().from(obligations),
-      tx.select().from(budgets),
-      tx.select().from(plans),
-    ])
-    if (populated.some((rows) => rows.length))
-      throw createError({
-        statusCode: 409,
-        message: 'Демо можно загрузить только в пустое пространство',
-      })
-    const main = crypto.randomUUID(),
-      savings = crypto.randomUUID(),
-      cash = crypto.randomUUID()
-    await tx.insert(accounts).values([
-      // The opening balance covers last month's loan payments recorded below.
-      {
-        id: main,
-        name: 'Основная карта',
-        kind: 'card',
-        openingBalance: '14760000',
-        color: 'green',
-      },
-      {
-        id: savings,
-        name: 'Накопления',
-        kind: 'savings',
-        openingBalance: '21000000',
-        color: 'blue',
-        inForecast: false,
-      },
-      { id: cash, name: 'Наличные', kind: 'cash', openingBalance: '850000', color: 'sand' },
-    ])
-    const now = new Date()
-    const day = (offset: number) => {
-      const date = new Date(now)
-      date.setDate(date.getDate() + offset)
-      return localDate(date)
-    }
-    const rows = [
-      {
-        kind: 'income',
-        amount: '18500000',
-        category: 'Зарплата',
-        description: 'Зарплата',
-        date: day(-4),
-      },
-      {
-        kind: 'expense',
-        amount: '468000',
-        category: 'Продукты',
-        description: 'ВкусВилл',
-        date: day(0),
-      },
-      {
-        kind: 'expense',
-        amount: '42000',
-        category: 'Кафе',
-        description: 'Кофе и круассан',
-        date: day(0),
-      },
-      {
-        kind: 'expense',
-        amount: '89000',
-        category: 'Транспорт',
-        description: 'Яндекс Go',
-        date: day(-1),
-      },
-      {
-        kind: 'expense',
-        amount: '249000',
-        category: 'Покупки',
-        description: 'Книга и мелочи для дома',
-        date: day(-1),
-      },
-      {
-        kind: 'expense',
-        amount: '129900',
-        category: 'Подписки',
-        description: 'Сервисы и подписки',
-        date: day(-2),
-      },
-      {
-        kind: 'expense',
-        amount: '724000',
-        category: 'Продукты',
-        description: 'Покупки на неделю',
-        date: day(-2),
-      },
-      {
-        kind: 'expense',
-        amount: '350000',
-        category: 'Здоровье',
-        description: 'Стоматолог',
-        date: day(-3),
-      },
-      {
-        kind: 'expense',
-        amount: '210000',
-        category: 'Развлечения',
-        description: 'Кино на двоих',
-        date: day(-3),
-      },
-      {
-        kind: 'expense',
-        amount: '630000',
-        category: 'Дом',
-        description: 'Коммунальные услуги',
-        date: day(-4),
-      },
-    ]
-    await tx
-      .insert(transactions)
-      .values(rows.map((row) => ({ id: crypto.randomUUID(), accountId: main, ...row })))
-    await tx.insert(goals).values([
-      {
-        id: crypto.randomUUID(),
-        title: 'Отпуск у моря',
-        target: '18000000',
-        saved: '7200000',
-        status: 'saving',
-        priority: 'high',
-        deadline: day(180),
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Подушка спокойствия',
-        target: '60000000',
-        saved: '21000000',
-        status: 'saving',
-        priority: 'high',
-        deadline: null,
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Новая кофемашина',
-        target: '4500000',
-        saved: '0',
-        status: 'wish',
-        priority: 'normal',
-        deadline: null,
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Рабочее кресло',
-        target: '3200000',
-        saved: '3200000',
-        status: 'planned',
-        priority: 'normal',
-        deadline: day(15),
-      },
-    ])
-    await tx.insert(events).values([
-      {
-        id: crypto.randomUUID(),
-        title: 'Запланировать выходные',
-        date: day(1),
-        kind: 'task',
-        amount: null,
-        done: false,
-        note: '',
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Проверить тариф связи',
-        date: day(5),
-        kind: 'task',
-        amount: null,
-        done: false,
-        note: '',
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Разобрать бюджет месяца',
-        date: day(7),
-        kind: 'task',
-        amount: null,
-        done: false,
-        note: 'Проверить категории и планы',
-      },
-    ])
-    await tx.insert(shopping).values([
-      { id: crypto.randomUUID(), title: 'Молоко', quantity: '2 л', price: '24000', checked: false },
-      {
-        id: crypto.randomUUID(),
-        title: 'Авокадо',
-        quantity: '2 шт.',
-        price: '32000',
-        checked: false,
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Хлеб на закваске',
-        quantity: '1 шт.',
-        price: '18000',
-        checked: true,
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Яйца',
-        quantity: '10 шт.',
-        price: '16000',
-        checked: false,
-      },
-    ])
-    // Loans are accounted from the first day of last month; that month's payments are recorded.
-    const startDate = `${shiftMonth(day(0).slice(0, 7), -1)}-01`
-    const loans = [
-      {
-        id: crypto.randomUUID(),
-        title: 'Ипотека · наша квартира',
-        kind: 'mortgage' as const,
-        openingBalance: '485000000',
-        startDate,
-        accountId: main,
-        payment: '4250000',
-        dueDay: 8,
-        rate: '8.5',
-      },
-      {
-        id: crypto.randomUUID(),
-        title: 'Кредит на автомобиль',
-        kind: 'credit' as const,
-        openingBalance: '38000000',
-        startDate,
-        accountId: main,
-        payment: '1870000',
-        dueDay: 20,
-        rate: '14.9',
-      },
-    ]
-    await tx.insert(obligations).values(loans)
-    await syncObligations(tx, '0')
-    for (const loan of loans) {
-      const dueDate = firstDueDate(startDate, loan.dueDay)
-      const { principal, interest } = suggestSplit(
-        BigInt(loan.openingBalance),
-        loan.rate,
-        BigInt(loan.payment),
-        false,
-      )
-      await payObligation(
-        tx,
-        {
-          obligationId: loan.id,
-          date: dueDate,
-          principal: principal.toString(),
-          interest: interest.toString(),
-          fees: '0',
-          mode: 'create',
-          accountId: main,
-          dueDate,
-          early: 'none',
-          note: '',
-        },
-        '0',
-      )
-    }
-    await syncObligations(tx, '0')
-    await tx.insert(budgets).values(
-      [
-        ['Продукты', '3000000'],
-        ['Дом', '1200000'],
-        ['Транспорт', '1000000'],
-        ['Покупки', '200000'],
-      ].map(([category, limit]) => ({
-        id: crypto.randomUUID(),
-        month: day(0).slice(0, 7),
-        category: category!,
-        limit: limit!,
-      })),
+async function seedDemo(tx: WriteTransaction) {
+  const populated = await Promise.all([
+    tx.select().from(accounts),
+    tx.select().from(transactions),
+    tx.select().from(goals),
+    tx.select().from(events),
+    tx.select().from(shopping),
+    tx.select().from(obligations),
+    tx.select().from(budgets),
+    tx.select().from(plans),
+  ])
+  if (populated.some((rows) => rows.length))
+    throw createError({
+      statusCode: 409,
+      message: 'Демо можно загрузить только в пустое пространство',
+    })
+  const main = crypto.randomUUID(),
+    savings = crypto.randomUUID(),
+    cash = crypto.randomUUID()
+  await tx.insert(accounts).values([
+    // The opening balance covers last month's loan payments recorded below.
+    {
+      id: main,
+      name: 'Основная карта',
+      kind: 'card',
+      openingBalance: '14760000',
+      color: 'green',
+    },
+    {
+      id: savings,
+      name: 'Накопления',
+      kind: 'savings',
+      openingBalance: '21000000',
+      color: 'blue',
+      inForecast: false,
+    },
+    { id: cash, name: 'Наличные', kind: 'cash', openingBalance: '850000', color: 'sand' },
+  ])
+  const now = new Date()
+  const day = (offset: number) => {
+    const date = new Date(now)
+    date.setDate(date.getDate() + offset)
+    return localDate(date)
+  }
+  const rows = [
+    {
+      kind: 'income',
+      amount: '18500000',
+      category: 'Зарплата',
+      description: 'Зарплата',
+      date: day(-4),
+    },
+    {
+      kind: 'expense',
+      amount: '468000',
+      category: 'Продукты',
+      description: 'ВкусВилл',
+      date: day(0),
+    },
+    {
+      kind: 'expense',
+      amount: '42000',
+      category: 'Кафе',
+      description: 'Кофе и круассан',
+      date: day(0),
+    },
+    {
+      kind: 'expense',
+      amount: '89000',
+      category: 'Транспорт',
+      description: 'Яндекс Go',
+      date: day(-1),
+    },
+    {
+      kind: 'expense',
+      amount: '249000',
+      category: 'Покупки',
+      description: 'Книга и мелочи для дома',
+      date: day(-1),
+    },
+    {
+      kind: 'expense',
+      amount: '129900',
+      category: 'Подписки',
+      description: 'Сервисы и подписки',
+      date: day(-2),
+    },
+    {
+      kind: 'expense',
+      amount: '724000',
+      category: 'Продукты',
+      description: 'Покупки на неделю',
+      date: day(-2),
+    },
+    {
+      kind: 'expense',
+      amount: '350000',
+      category: 'Здоровье',
+      description: 'Стоматолог',
+      date: day(-3),
+    },
+    {
+      kind: 'expense',
+      amount: '210000',
+      category: 'Развлечения',
+      description: 'Кино на двоих',
+      date: day(-3),
+    },
+    {
+      kind: 'expense',
+      amount: '630000',
+      category: 'Дом',
+      description: 'Коммунальные услуги',
+      date: day(-4),
+    },
+  ]
+  await tx
+    .insert(transactions)
+    .values(rows.map((row) => ({ id: crypto.randomUUID(), accountId: main, ...row })))
+  await tx.insert(goals).values([
+    {
+      id: crypto.randomUUID(),
+      title: 'Отпуск у моря',
+      target: '18000000',
+      saved: '7200000',
+      status: 'saving',
+      priority: 'high',
+      deadline: day(180),
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Подушка спокойствия',
+      target: '60000000',
+      saved: '21000000',
+      status: 'saving',
+      priority: 'high',
+      deadline: null,
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Новая кофемашина',
+      target: '4500000',
+      saved: '0',
+      status: 'wish',
+      priority: 'normal',
+      deadline: null,
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Рабочее кресло',
+      target: '3200000',
+      saved: '3200000',
+      status: 'planned',
+      priority: 'normal',
+      deadline: day(15),
+    },
+  ])
+  await tx.insert(events).values([
+    {
+      id: crypto.randomUUID(),
+      title: 'Запланировать выходные',
+      date: day(1),
+      kind: 'task',
+      amount: null,
+      done: false,
+      note: '',
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Проверить тариф связи',
+      date: day(5),
+      kind: 'task',
+      amount: null,
+      done: false,
+      note: '',
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Разобрать бюджет месяца',
+      date: day(7),
+      kind: 'task',
+      amount: null,
+      done: false,
+      note: 'Проверить категории и планы',
+    },
+  ])
+  await tx.insert(shopping).values([
+    { id: crypto.randomUUID(), title: 'Молоко', quantity: '2 л', price: '24000', checked: false },
+    {
+      id: crypto.randomUUID(),
+      title: 'Авокадо',
+      quantity: '2 шт.',
+      price: '32000',
+      checked: false,
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Хлеб на закваске',
+      quantity: '1 шт.',
+      price: '18000',
+      checked: true,
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Яйца',
+      quantity: '10 шт.',
+      price: '16000',
+      checked: false,
+    },
+  ])
+  // Loans are accounted from the first day of last month; that month's payments are recorded.
+  const startDate = `${shiftMonth(day(0).slice(0, 7), -1)}-01`
+  const loans = [
+    {
+      id: crypto.randomUUID(),
+      title: 'Ипотека · наша квартира',
+      kind: 'mortgage' as const,
+      openingBalance: '485000000',
+      startDate,
+      accountId: main,
+      payment: '4250000',
+      dueDay: 8,
+      rate: '8.5',
+    },
+    {
+      id: crypto.randomUUID(),
+      title: 'Кредит на автомобиль',
+      kind: 'credit' as const,
+      openingBalance: '38000000',
+      startDate,
+      accountId: main,
+      payment: '1870000',
+      dueDay: 20,
+      rate: '14.9',
+    },
+  ]
+  await tx.insert(obligations).values(loans)
+  await syncObligations(tx, '0')
+  for (const loan of loans) {
+    const dueDate = firstDueDate(startDate, loan.dueDay)
+    const { principal, interest } = suggestSplit(
+      BigInt(loan.openingBalance),
+      loan.rate,
+      BigInt(loan.payment),
+      false,
     )
-    const demoPlans = [
+    await payObligation(
+      tx,
       {
-        direction: 'expense' as const,
-        title: 'Интернет и связь',
-        category: 'Дом',
-        amount: '150000',
+        obligationId: loan.id,
+        date: dueDate,
+        principal: principal.toString(),
+        interest: interest.toString(),
+        fees: '0',
+        mode: 'create',
         accountId: main,
-        frequency: 'monthly' as const,
-        startDate: day(5),
-        note: 'Проверить сумму в личном кабинете перед оплатой',
-      },
-      {
-        direction: 'income' as const,
-        title: 'Аванс и зарплата',
-        category: 'Зарплата',
-        amount: '9250000',
-        accountId: main,
-        frequency: 'monthly' as const,
-        startDate: day(1),
+        dueDate,
+        early: 'none',
         note: '',
-        monthDays: [5, 20],
-        holidayShift: 'before' as const,
       },
-    ]
-    for (const { direction, ...plan } of demoPlans)
-      await executePlanningCommand(
-        tx,
-        {
-          op: 'plan.save',
-          direction,
-          data: planSchema.parse({ ...plan, interval: 1, endDate: null }),
-        },
-        '0',
-      )
-    await tx
-      .insert(settings)
-      .values({ key: 'demo', value: 'true' })
-      .onConflictDoUpdate({ target: settings.key, set: { value: 'true' } })
-    await tx
-      .update(workspaceGuard)
-      .set({ revision: sql`${workspaceGuard.revision} + 1` })
-      .where(eq(workspaceGuard.id, 1))
-  })
+      '0',
+    )
+  }
+  await syncObligations(tx, '0')
+  await tx.insert(budgets).values(
+    [
+      ['Продукты', '3000000'],
+      ['Дом', '1200000'],
+      ['Транспорт', '1000000'],
+      ['Покупки', '200000'],
+    ].map(([category, limit]) => ({
+      id: crypto.randomUUID(),
+      month: day(0).slice(0, 7),
+      category: category!,
+      limit: limit!,
+    })),
+  )
+  const demoPlans = [
+    {
+      direction: 'expense' as const,
+      title: 'Интернет и связь',
+      category: 'Дом',
+      amount: '150000',
+      accountId: main,
+      frequency: 'monthly' as const,
+      startDate: day(5),
+      note: 'Проверить сумму в личном кабинете перед оплатой',
+    },
+    {
+      direction: 'income' as const,
+      title: 'Аванс и зарплата',
+      category: 'Зарплата',
+      amount: '9250000',
+      accountId: main,
+      frequency: 'monthly' as const,
+      startDate: day(1),
+      note: '',
+      monthDays: [5, 20],
+      holidayShift: 'before' as const,
+    },
+  ]
+  for (const { direction, ...plan } of demoPlans)
+    await executePlanningCommand(
+      tx,
+      {
+        op: 'plan.save',
+        direction,
+        data: planSchema.parse({ ...plan, interval: 1, endDate: null }),
+      },
+      '0',
+    )
+  await tx
+    .insert(settings)
+    .values({ key: 'demo', value: 'true' })
+    .onConflictDoUpdate({ target: settings.key, set: { value: 'true' } })
 }

@@ -132,7 +132,7 @@ describe('budgets and versioned recurring plans', () => {
       ['2026-03-31', 'skipped', '10000'],
     ])
     expect(state.planOccurrences).toHaveLength(2)
-    expect(createBackup(state).version).toBe(4)
+    expect(createBackup(state).version).toBe(5)
   })
   it('retains account references even for paused schedules', async () => {
     await run({ op: 'account.create', data: { name: 'Пустой', openingBalance: '0' } })
