@@ -18,11 +18,9 @@ function edit(account?: Account) {
 }
 function hasHistory(account: Account) {
   return (
-    [
-      ...w.value.recurringPayments,
-      ...w.value.recurringVersions,
-      ...w.value.paymentOccurrences,
-    ].some((r) => r.accountId === account.id) ||
+    [...w.value.plans, ...w.value.planVersions, ...w.value.planOccurrences].some(
+      (r) => r.accountId === account.id,
+    ) ||
     [...w.value.transactions, ...w.value.deletedTransactions].some((t) =>
       [t.accountId, t.toAccountId, t.importAccountId].includes(account.id),
     )

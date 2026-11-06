@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { categories } from '../../shared/types'
-import { budgetRows, categorySpending, shiftMonth } from '../../shared/planning'
+import { budgetRows, categorySpending, monthPlan, shiftMonth } from '../../shared/planning'
 import { localDate, money, sumAmounts, toMinor, toMajor } from '../../shared/money'
 import type { Budget } from '../../shared/planning-types'
 import { monthSchema } from '../../shared/planning-schemas'
@@ -20,13 +20,14 @@ watch(
   { immediate: true },
 )
 const rows = computed(() => budgetRows(w.value, month.value))
+const plan = computed(() => monthPlan(w.value, month.value))
 const totalLimit = computed(() => sumAmounts(rows.value.map((r) => r.limit))),
   totalSpent = computed(() => sumAmounts(rows.value.map((r) => r.spent)))
 const options = computed(() => [
   ...new Set([
     ...categories.filter((c) => c !== 'Зарплата'),
     ...w.value.transactions.filter((t) => t.kind === 'expense').map((t) => t.category),
-    ...w.value.recurringPayments.map((r) => r.category),
+    ...w.value.plans.filter((p) => p.direction === 'expense').map((p) => p.category),
   ]),
 ])
 const unbudgeted = computed(() =>
@@ -139,6 +140,30 @@ async function copy() {
       <span>Осталось по лимитам</span
       ><strong :class="{ 'budget-danger': BigInt(totalSpent) > BigInt(totalLimit) }">{{
         money((BigInt(totalLimit) - BigInt(totalSpent)).toString())
+      }}</strong>
+    </div>
+  </div>
+  <div class="summary-strip budget-plan-strip">
+    <div>
+      <span>Доходы: получено и ожидается</span
+      ><strong class="text-green"
+        >+{{ money(plan.incomeTotal) }}
+        <span class="muted"
+          >· получено {{ money(plan.received) }}, ждём {{ money(plan.expectedIncome) }}</span
+        ></strong
+      >
+    </div>
+    <div>
+      <span>Расходы: записано и запланировано</span
+      ><strong
+        >{{ money((BigInt(plan.spent) + BigInt(plan.expectedPayments)).toString()) }}
+        <span class="muted">· ещё к оплате {{ money(plan.expectedPayments) }}</span></strong
+      >
+    </div>
+    <div>
+      <span>Итог месяца по плану</span
+      ><strong :class="{ 'budget-danger': BigInt(plan.balance) < 0n }">{{
+        money(plan.balance)
       }}</strong>
     </div>
   </div>

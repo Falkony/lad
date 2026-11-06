@@ -11,11 +11,13 @@ import {
 import type { Workspace } from './types'
 import {
   budgetSchema,
-  recurringSchema,
-  recurringVersionSchema,
+  directionSchema,
+  planSchema,
+  planVersionSchema,
   occurrenceSchema,
 } from './planning-schemas'
 
+export const backupVersion = 4
 const timestamp = z
   .string()
   .max(40)
@@ -54,9 +56,91 @@ const transaction = z
         path: ['toAccountId'],
       })
   })
-export const backupSchema = z
+
+type Row = Record<string, unknown>
+const isRow = (value: unknown): value is Row =>
+  !!value && typeof value === 'object' && !Array.isArray(value)
+const rows = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
+/**
+ * Copies of versions 1–3 stored recurring payments under other names and kept one-off payments
+ * in the calendar. Convert them to the plan model the same way migration 6 converts a database;
+ * anything malformed is passed through untouched for the schema to report.
+ */
+export function upgradeBackup(input: unknown): unknown {
+  if (!isRow(input) || ![1, 2, 3].includes(input.version as number)) return input
+  const { recurringPayments, recurringVersions, paymentOccurrences, ...rest } = input
+  const plans: unknown[] = rows(recurringPayments).map((r) =>
+    isRow(r) ? { ...r, direction: 'expense', source: 'manual', sourceId: null } : r,
+  )
+  const planVersions: unknown[] = rows(recurringVersions).map((v) => {
+    if (!isRow(v)) return v
+    const { recurringId, ...version } = v
+    return { ...version, planId: recurringId }
+  })
+  const planOccurrences: unknown[] = rows(paymentOccurrences).map((o) => {
+    if (!isRow(o)) return o
+    const { recurringId, ...occurrence } = o
+    return { ...occurrence, planId: recurringId, movedTo: null }
+  })
+  const events: unknown[] = []
+  for (const event of rows(input.events)) {
+    if (!isRow(event)) {
+      events.push(event)
+      continue
+    }
+    const amount = typeof event.amount === 'string' && /^\d+$/.test(event.amount) && event.amount
+    if (event.kind !== 'payment' || !amount || BigInt(amount) === 0n) {
+      events.push({ ...event, kind: event.kind === 'note' ? 'note' : 'task', amount: null })
+      continue
+    }
+    const fields = {
+      title: event.title,
+      category: 'Другое',
+      amount,
+      accountId: null,
+      frequency: 'once',
+      interval: 1,
+      startDate: event.date,
+      endDate: null,
+      note: event.note ?? '',
+    }
+    plans.push({ id: event.id, ...fields, active: true, direction: 'expense', source: 'manual' })
+    planVersions.push({
+      id: crypto.randomUUID(),
+      planId: event.id,
+      ...fields,
+      validFrom: event.date,
+      validTo: null,
+    })
+    // A payment ticked off in the calendar had no linked expense: keep it as a closed date.
+    if (event.done)
+      planOccurrences.push({
+        id: crypto.randomUUID(),
+        planId: event.id,
+        dueDate: event.date,
+        title: event.title,
+        category: 'Другое',
+        amount,
+        accountId: null,
+        note: event.note ?? '',
+        status: 'closed',
+        transactionId: null,
+        movedTo: null,
+      })
+  }
+  return { ...rest, version: backupVersion, events, plans, planVersions, planOccurrences }
+}
+
+const plan = planSchema.safeExtend({
+  id: z.uuid(),
+  active: z.boolean(),
+  direction: directionSchema,
+  source: z.enum(['manual', 'obligation', 'goal']).default('manual'),
+  sourceId: z.string().max(100).nullable().default(null),
+})
+const backupObject = z
   .object({
-    version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    version: z.literal(backupVersion),
     exportedAt: z.iso.datetime(),
     accounts: z.array(account).max(1000),
     transactions: z.array(transaction).max(50000),
@@ -70,12 +154,9 @@ export const backupSchema = z
       .array(budgetSchema.extend({ id: z.uuid() }))
       .max(20000)
       .default([]),
-    recurringPayments: z
-      .array(recurringSchema.safeExtend({ id: z.uuid(), active: z.boolean() }))
-      .max(10000)
-      .default([]),
-    recurringVersions: z.array(recurringVersionSchema).max(50000).default([]),
-    paymentOccurrences: z.array(occurrenceSchema).max(50000).default([]),
+    plans: z.array(plan).max(20000).default([]),
+    planVersions: z.array(planVersionSchema).max(50000).default([]),
+    planOccurrences: z.array(occurrenceSchema).max(50000).default([]),
   })
   .superRefine((backup, ctx) => {
     for (const key of [
@@ -85,9 +166,9 @@ export const backupSchema = z
       'shopping',
       'obligations',
       'budgets',
-      'recurringPayments',
-      'recurringVersions',
-      'paymentOccurrences',
+      'plans',
+      'planVersions',
+      'planOccurrences',
     ] as const) {
       const ids = new Set<string>()
       for (const row of backup[key]) {
@@ -141,40 +222,32 @@ export const backupSchema = z
         message: 'Нарушено разделение действующих и удалённых операций',
         path: ['deletedTransactions'],
       })
-    const issue = (message: string) =>
-      ctx.addIssue({ code: 'custom', message, path: ['recurringPayments'] })
-    const rules = new Map(backup.recurringPayments.map((r) => [r.id, r])),
+    const issue = (message: string) => ctx.addIssue({ code: 'custom', message, path: ['plans'] })
+    const plans = new Map(backup.plans.map((p) => [p.id, p])),
       allTransactions = new Map(
         [...backup.transactions, ...backup.deletedTransactions].map((t) => [t.id, t]),
       )
     const budgetKeys = new Set<string>(),
-      paymentKeys = new Set<string>(),
+      dateKeys = new Set<string>(),
       linked = new Set<string>()
     for (const b of backup.budgets) {
       const key = `${b.month}:${b.category}`
       if (budgetKeys.has(key)) issue('Дублирующийся лимит категории')
       budgetKeys.add(key)
     }
-    for (const row of [
-      ...backup.recurringPayments,
-      ...backup.recurringVersions,
-      ...backup.paymentOccurrences,
-    ])
-      if (row.accountId && !accounts.has(row.accountId))
-        issue('В расписании указан отсутствующий счёт')
-    for (const version of backup.recurringVersions)
-      if (!rules.has(version.recurringId))
-        issue('Версия расписания ссылается на отсутствующий платёж')
-    for (const rule of backup.recurringPayments) {
-      const versions = backup.recurringVersions
-        .filter((v) => v.recurringId === rule.id)
+    for (const row of [...backup.plans, ...backup.planVersions, ...backup.planOccurrences])
+      if (row.accountId && !accounts.has(row.accountId)) issue('В плане указан отсутствующий счёт')
+    for (const version of backup.planVersions)
+      if (!plans.has(version.planId)) issue('Версия плана ссылается на отсутствующий план')
+    for (const plan of backup.plans) {
+      const versions = backup.planVersions
+        .filter((v) => v.planId === plan.id)
         .sort((a, b) => a.validFrom.localeCompare(b.validFrom))
       const open = versions.filter((v) => !v.validTo)
-      if (open.length !== (rule.active ? 1 : 0))
-        issue('Нарушена целостность действующего расписания')
+      if (open.length !== (plan.active ? 1 : 0)) issue('Нарушена целостность действующего плана')
       for (let i = 1; i < versions.length; i++)
         if (!versions[i - 1]!.validTo || versions[i]!.validFrom <= versions[i - 1]!.validTo!)
-          issue('Периоды расписания пересекаются')
+          issue('Периоды плана пересекаются')
       if (open[0])
         for (const key of [
           'title',
@@ -187,27 +260,29 @@ export const backupSchema = z
           'endDate',
           'note',
         ] as const)
-          if (open[0][key] !== rule[key])
-            issue('Текущие настройки и расписание платежа не совпадают')
+          if (open[0][key] !== plan[key]) issue('Текущие настройки плана и его версия не совпадают')
     }
-    for (const payment of backup.paymentOccurrences) {
-      if (!rules.has(payment.recurringId))
-        issue('Отметка оплаты ссылается на отсутствующее расписание')
-      const key = `${payment.recurringId}:${payment.dueDate}`
-      if (paymentKeys.has(key)) issue('Повторяющаяся отметка одного платежа')
-      paymentKeys.add(key)
-      if (payment.transactionId) {
-        const tx = allTransactions.get(payment.transactionId)
-        if (!tx || tx.kind !== 'expense') issue('Оплата должна ссылаться на существующий расход')
-        if (linked.has(payment.transactionId)) issue('Один расход связан с несколькими платежами')
-        linked.add(payment.transactionId)
+    for (const occurrence of backup.planOccurrences) {
+      const owner = plans.get(occurrence.planId)
+      if (!owner) issue('Отметка даты ссылается на отсутствующий план')
+      const key = `${occurrence.planId}:${occurrence.dueDate}`
+      if (dateKeys.has(key)) issue('Повторяющаяся отметка одной даты плана')
+      dateKeys.add(key)
+      if (occurrence.transactionId) {
+        const tx = allTransactions.get(occurrence.transactionId)
+        if (!tx || (owner && tx.kind !== owner.direction))
+          issue('Подтверждение должно ссылаться на существующую операцию того же направления')
+        if (linked.has(occurrence.transactionId))
+          issue('Одна операция подтверждает несколько дат плана')
+        linked.add(occurrence.transactionId)
       }
     }
   })
-export type Backup = z.infer<typeof backupSchema>
+export const backupSchema = z.preprocess(upgradeBackup, backupObject)
+export type Backup = z.infer<typeof backupObject>
 // Export must never fail because of one unexpected row: a backup that the restore preview
 // flags is better than no backup at all. Full validation happens on restore.
 export function createBackup(workspace: Workspace): Backup {
   const { revision: _revision, ...data } = workspace
-  return { ...data, version: 3, exportedAt: new Date().toISOString() } as Backup
+  return { ...data, version: backupVersion, exportedAt: new Date().toISOString() } as Backup
 }

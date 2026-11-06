@@ -7,6 +7,8 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css', '~/assets/css/iteration-two.css', '~/assets/css/planning.css'],
   ssr: false,
   devtools: { enabled: false },
+  // The recurring payments page became the unified plans page in iteration 4a.
+  routeRules: { '/recurring': { redirect: '/plans' } },
   app: {
     head: {
       title: 'Лад — деньги и дела',

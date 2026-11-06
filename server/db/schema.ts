@@ -93,7 +93,7 @@ export const budgets = pgTable(
   },
   (t) => [uniqueIndex('budgets_month_category').on(t.month, t.category)],
 )
-const recurringFields = () => ({
+const planFields = () => ({
   title: text('title').notNull(),
   category: text('category').notNull(),
   amount: money('amount'),
@@ -104,36 +104,41 @@ const recurringFields = () => ({
   endDate: text('end_date'),
   note: text('note').notNull(),
 })
-export const recurringPayments = pgTable('recurring_payments', {
+// One model for every planned income and payment: one-off or recurring (migration 6).
+export const plans = pgTable('plans', {
   id: text('id').primaryKey(),
-  ...recurringFields(),
+  ...planFields(),
   active: boolean('active').notNull().default(true),
+  direction: text('direction').notNull().default('expense'),
+  source: text('source').notNull().default('manual'),
+  sourceId: text('source_id'),
 })
-export const recurringVersions = pgTable(
-  'recurring_versions',
+// Index names keep their pre-migration-6 names: renaming a table does not rename its indexes.
+export const planVersions = pgTable(
+  'plan_versions',
   {
     id: text('id').primaryKey(),
-    recurringId: text('recurring_id')
+    planId: text('plan_id')
       .notNull()
-      .references(() => recurringPayments.id),
-    ...recurringFields(),
+      .references(() => plans.id),
+    ...planFields(),
     validFrom: text('valid_from').notNull(),
     validTo: text('valid_to'),
   },
   (t) => [
-    index('recurring_versions_rule').on(t.recurringId),
+    index('recurring_versions_rule').on(t.planId),
     uniqueIndex('recurring_versions_open')
-      .on(t.recurringId)
+      .on(t.planId)
       .where(sql`${t.validTo} is null`),
   ],
 )
-export const paymentOccurrences = pgTable(
-  'payment_occurrences',
+export const planOccurrences = pgTable(
+  'plan_occurrences',
   {
     id: text('id').primaryKey(),
-    recurringId: text('recurring_id')
+    planId: text('plan_id')
       .notNull()
-      .references(() => recurringPayments.id),
+      .references(() => plans.id),
     dueDate: text('due_date').notNull(),
     title: text('title').notNull(),
     category: text('category').notNull(),
@@ -144,6 +149,7 @@ export const paymentOccurrences = pgTable(
     transactionId: text('transaction_id')
       .unique()
       .references(() => transactions.id),
+    movedTo: text('moved_to'),
   },
-  (t) => [uniqueIndex('payment_occurrences_rule_date').on(t.recurringId, t.dueDate)],
+  (t) => [uniqueIndex('payment_occurrences_recurring_id_due_date_key').on(t.planId, t.dueDate)],
 )

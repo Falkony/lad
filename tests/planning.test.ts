@@ -6,12 +6,12 @@ import {
   recurringDates,
   shiftMonth,
 } from '../shared/planning'
-import type { RecurringVersion } from '../shared/planning-types'
+import type { PlanVersion } from '../shared/planning-types'
 import type { Transaction, Workspace } from '../shared/types'
 
-const schedule: RecurringVersion = {
+const schedule: PlanVersion = {
   id: 'version',
-  recurringId: 'rule',
+  planId: 'rule',
   title: 'Связь',
   category: 'Дом',
   amount: '10000',
@@ -112,8 +112,9 @@ describe('monthly budget accounting', () => {
   it('separates actual spending from unpaid plans and avoids counting paid plans twice', () => {
     const state = {
       budgets: [{ id: 'b', month: '2026-02', category: 'Дом', limit: '12000' }],
-      recurringVersions: [schedule],
-      paymentOccurrences: [],
+      plans: [{ id: 'rule', direction: 'expense', frequency: 'monthly' }],
+      planVersions: [schedule],
+      planOccurrences: [],
       transactions: [expense],
       deletedTransactions: [],
     } as unknown as Workspace
@@ -123,10 +124,10 @@ describe('monthly budget accounting', () => {
       remaining: '8000',
       afterPlanned: '-2000',
     })
-    state.paymentOccurrences = [
+    state.planOccurrences = [
       {
         id: 'p',
-        recurringId: 'rule',
+        planId: 'rule',
         dueDate: '2026-02-28',
         title: 'Связь',
         category: 'Дом',
@@ -134,6 +135,7 @@ describe('monthly budget accounting', () => {
         accountId: null,
         note: '',
         status: 'paid',
+        movedTo: null,
         transactionId: expense.id,
       },
     ]

@@ -59,8 +59,9 @@ export const goalSchema = z.object({
 export const eventSchema = z.object({
   title,
   date,
-  kind: z.enum(['task', 'payment', 'note']).default('task'),
-  amount: positiveAmount.nullable().default(null),
+  // Payments and incomes are plans (planning-schemas.ts); the calendar keeps tasks and notes.
+  kind: z.enum(['task', 'note']).default('task'),
+  amount: z.null().default(null),
   done: z.boolean().default(false),
   note: z.string().max(1000).default(''),
 })

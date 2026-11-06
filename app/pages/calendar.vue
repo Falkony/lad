@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { money, toMinor, localDate, sumAmounts } from '../../shared/money'
-import { addDays, monthRange, projectPayments } from '../../shared/planning'
+import { addDays, monthRange, projectPlans, isOpen } from '../../shared/planning'
 import type { CalendarEvent } from '../../shared/types'
-import type { ProjectedPayment } from '../../shared/planning-types'
+import type { ProjectedOccurrence } from '../../shared/planning-types'
 import { z } from 'zod'
 const { workspace: w, command, pending } = useWorkspace()
 const now = new Date(),
@@ -11,10 +11,21 @@ const now = new Date(),
   open = ref(false),
   error = ref(''),
   deleting = ref<string | null>(null)
-const form = reactive({ title: '', date: localDate(), kind: 'task', amount: '', note: '' })
+const form = reactive({
+  title: '',
+  date: localDate(),
+  kind: 'task',
+  amount: '',
+  category: '',
+  note: '',
+})
+const isPlan = computed(() => form.kind === 'payment' || form.kind === 'income')
 const route = useRoute()
-const paying = ref<ProjectedPayment | null>(null)
-type CalendarEntry = CalendarEvent & { payment?: ProjectedPayment }
+const confirming = ref<ProjectedOccurrence | null>(null)
+type CalendarEntry = Omit<CalendarEvent, 'amount'> & {
+  amount: string | null
+  plan?: ProjectedOccurrence
+}
 const calendarRange = computed(() => {
   const first = new Date(month.value)
   first.setDate(first.getDate() - ((first.getDay() + 6) % 7))
@@ -23,24 +34,24 @@ const calendarRange = computed(() => {
 })
 const calendarEvents = computed<CalendarEntry[]>(() => [
   ...w.value.events,
-  ...projectPayments(w.value, calendarRange.value.from, calendarRange.value.to).map((p) => ({
+  ...projectPlans(w.value, calendarRange.value.from, calendarRange.value.to).map((p) => ({
     id: p.id,
     title: p.title,
-    date: p.dueDate,
-    kind: 'payment',
+    date: p.date,
+    kind: p.direction === 'income' ? 'income' : 'payment',
     amount: p.amount,
-    done: ['paid', 'skipped'].includes(p.status),
+    done: !isOpen(p),
     note: p.note,
-    payment: p,
+    plan: p,
   })),
 ])
-const monthlyPayments = computed(() => {
+const monthlyPlans = computed(() => {
   const range = monthRange(localDate(month.value).slice(0, 7))
-  return projectPayments(w.value, range.from, range.to)
+  return projectPlans(w.value, range.from, range.to)
 })
-const toPay = computed(() =>
-  monthlyPayments.value.filter((p) => ['pending', 'deleted'].includes(p.status)),
-)
+const openPlans = computed(() => monthlyPlans.value.filter(isOpen))
+const openSum = (direction: 'income' | 'expense') =>
+  sumAmounts(openPlans.value.filter((p) => p.direction === direction).map((p) => p.amount))
 onMounted(() => {
   if (typeof route.query.date === 'string' && z.iso.date().safeParse(route.query.date).success) {
     selected.value = route.query.date
@@ -66,6 +77,7 @@ onMounted(() => {
     date: selected.value,
     kind: 'payment',
     amount: typeof route.query.amount === 'string' ? route.query.amount : '',
+    category: 'Другое',
   })
   open.value = true
 })
@@ -107,18 +119,49 @@ function today() {
   selected.value = localDate()
 }
 function create() {
-  Object.assign(form, { title: '', date: selected.value, kind: 'task', amount: '', note: '' })
+  Object.assign(form, {
+    title: '',
+    date: selected.value,
+    kind: 'task',
+    amount: '',
+    category: '',
+    note: '',
+  })
   error.value = ''
   open.value = true
 }
+watch(
+  () => form.kind,
+  (kind) => {
+    if (!form.category || ['Другое', 'Зарплата'].includes(form.category))
+      form.category = kind === 'income' ? 'Зарплата' : 'Другое'
+  },
+)
 async function save() {
   error.value = ''
   try {
+    // Payments and incomes become one-off plans so they reach the budget and can be confirmed.
     await command(
-      {
-        op: 'event.create',
-        data: { ...form, amount: form.kind === 'payment' ? toMinor(form.amount) : null },
-      },
+      isPlan.value
+        ? {
+            op: 'plan.save',
+            direction: form.kind === 'income' ? 'income' : 'expense',
+            data: {
+              title: form.title,
+              category: form.category || 'Другое',
+              amount: toMinor(form.amount),
+              accountId: null,
+              frequency: 'once',
+              interval: 1,
+              startDate: form.date,
+              endDate: null,
+              note: form.note,
+            },
+          }
+        : {
+            op: 'event.create',
+            data: { title: form.title, date: form.date, kind: form.kind, note: form.note },
+          },
       'Запись добавлена в календарь',
     )
     open.value = false
@@ -145,29 +188,28 @@ async function remove() {
     <div>
       <div class="eyebrow">У ВСЕГО ЕСТЬ СВОЁ ВРЕМЯ</div>
       <h1>Планы без суеты<span class="title-dot">.</span></h1>
-      <p>Дела, заметки и важные платежи в одном календаре.</p>
+      <p>Дела, заметки, поступления и платежи в одном календаре.</p>
     </div>
     <div class="heading-actions">
-      <NuxtLink to="/recurring" class="button secondary"
-        ><AppIcon name="repeat" :size="17" />Расписания</NuxtLink
+      <NuxtLink to="/plans" class="button secondary"
+        ><AppIcon name="repeat" :size="17" />Планы</NuxtLink
       ><button class="button primary" @click="create">
         <AppIcon name="plus" :size="18" />Новая запись
       </button>
     </div>
   </div>
-  <div v-if="monthlyPayments.length" class="summary-strip calendar-payment-summary">
+  <div v-if="monthlyPlans.length" class="summary-strip calendar-payment-summary">
     <div>
-      <span>Повторы: ещё к оплате</span
-      ><strong>{{ money(sumAmounts(toPay.map((p) => p.amount))) }}</strong>
+      <span>Ожидается поступлений</span
+      ><strong class="text-green">+{{ money(openSum('income')) }}</strong>
     </div>
     <div>
-      <span>Оплачено дат месяца</span
-      ><strong>{{ monthlyPayments.filter((p) => p.status === 'paid').length }}</strong>
+      <span>Ещё к оплате</span><strong>{{ money(openSum('expense')) }}</strong>
     </div>
     <div>
       <span>Срок прошёл</span
-      ><strong :class="{ 'budget-danger': toPay.some((p) => p.dueDate < localDate()) }">{{
-        toPay.filter((p) => p.dueDate < localDate()).length
+      ><strong :class="{ 'budget-danger': openPlans.some((p) => p.date < localDate()) }">{{
+        openPlans.filter((p) => p.date < localDate()).length
       }}</strong>
     </div>
   </div>
@@ -203,7 +245,7 @@ async function remove() {
             v-for="event in day.events.slice(0, 2)"
             :key="event.id"
             class="calendar-event"
-            :class="[event.kind, event.payment?.status, { done: event.done }]"
+            :class="[event.kind, event.plan?.status, { done: event.done }]"
             ><i />{{ event.title }}</span
           ><span v-if="day.events.length > 2" class="calendar-more"
             >+{{ day.events.length - 2 }}</span
@@ -221,7 +263,7 @@ async function remove() {
         </div>
       </div>
       <template v-for="event in selectedEvents" :key="event.id"
-        ><PaymentItem v-if="event.payment" :payment="event.payment" @pay="paying = $event" />
+        ><PlanItem v-if="event.plan" :item="event.plan" @confirm="confirming = $event" />
         <div v-else class="day-event">
           <button
             class="check-box"
@@ -233,11 +275,8 @@ async function remove() {
             <AppIcon v-if="event.done" name="check" :size="13" />
           </button>
           <div :class="{ 'is-done': event.done }">
-            <span class="event-type">{{
-              event.kind === 'payment' ? 'Платёж' : event.kind === 'note' ? 'Заметка' : 'Дело'
-            }}</span
-            ><strong>{{ event.title }}</strong
-            ><span v-if="event.amount" class="day-event-amount">{{ money(event.amount) }}</span>
+            <span class="event-type">{{ event.kind === 'note' ? 'Заметка' : 'Дело' }}</span
+            ><strong>{{ event.title }}</strong>
             <p v-if="event.note">{{ event.note }}</p>
           </div>
           <button class="icon-button" aria-label="Удалить запись" @click="deleting = event.id">
@@ -256,9 +295,9 @@ async function remove() {
   <div class="note-card">
     <AppIcon name="bell" :size="21" />
     <p>
-      Оплата повторяющегося платежа связывает расход с календарём. Для обычных дел и заметок
-      доступна простая отметка выполнения. Все даты повторов рассчитываются из расписания, включая
-      короткие месяцы.
+      Подтверждение поступления или платежа связывает с календарём доход или расход. Отдельную дату
+      можно перенести, изменить её сумму или отменить — остальное расписание не меняется. Для дел и
+      заметок доступна простая отметка выполнения.
     </p>
   </div>
   <AppDialog v-model="open" title="Новая запись" description="Освободите голову — запишите здесь."
@@ -275,17 +314,25 @@ async function remove() {
           >Тип<select v-model="form.kind">
             <option value="task">Дело</option>
             <option value="payment">Платёж</option>
+            <option value="income">Поступление</option>
             <option value="note">Заметка</option>
           </select></label
         ><label>Дата<input v-model="form.date" type="date" required /></label>
       </div>
-      <label v-if="form.kind === 'payment'"
-        >Плановая сумма, ₽<input
-          v-model="form.amount"
-          inputmode="decimal"
-          placeholder="0,00"
-          required /></label
-      ><label
+      <div v-if="isPlan" class="form-row">
+        <label
+          >Плановая сумма, ₽<input
+            v-model="form.amount"
+            inputmode="decimal"
+            placeholder="0,00"
+            required /></label
+        ><label>Категория<input v-model="form.category" required maxlength="160" /></label>
+      </div>
+      <p v-if="isPlan" class="form-hint">
+        {{ form.kind === 'income' ? 'Поступление' : 'Платёж' }} станет разовым планом: его можно
+        подтвердить операцией, перенести или отменить.
+      </p>
+      <label
         >Заметка<textarea
           v-model="form.note"
           placeholder="Детали, о которых стоит помнить"
@@ -307,5 +354,5 @@ async function remove() {
       ><button class="button danger" :disabled="pending" @click="remove">Удалить</button>
     </div></AppDialog
   >
-  <PaymentDialog v-model="paying" />
+  <PlanConfirmDialog v-model="confirming" />
 </template>

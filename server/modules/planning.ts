@@ -1,43 +1,46 @@
 import { z } from 'zod'
-import { and, eq, isNull, gte } from 'drizzle-orm'
+import { and, eq, isNull, gte, inArray } from 'drizzle-orm'
 import { createError } from 'h3'
 import type { WriteTransaction } from '../db'
+import { accounts, budgets, plans, planVersions, planOccurrences, transactions } from '../db/schema'
 import {
-  accounts,
-  budgets,
-  recurringPayments,
-  recurringVersions,
-  paymentOccurrences,
-  transactions,
-} from '../db/schema'
-import { budgetSchema, monthSchema, recurringSchema } from '../../shared/planning-schemas'
-import { positiveAmount } from '../../shared/schemas'
+  budgetSchema,
+  directionSchema,
+  monthSchema,
+  planSchema,
+} from '../../shared/planning-schemas'
+import { pastDate, positiveAmount, revision } from '../../shared/schemas'
 import { localDate } from '../../shared/money'
-import { addDays, projectPayments } from '../../shared/planning'
+import { addDays, projectOccurrence } from '../../shared/planning'
 import type {
   CommandResult,
-  RecurringFields,
-  RecurringVersion,
-  PaymentOccurrence,
+  Plan,
+  PlanFields,
+  PlanVersion,
+  PlanOccurrence,
 } from '../../shared/planning-types'
 import type { Transaction } from '../../shared/types'
 
-const paymentKey = { recurringId: z.uuid(), dueDate: z.iso.date() }
-const revision = z.string().regex(/^\d{1,20}$/)
+const dateKey = { planId: z.uuid(), dueDate: z.iso.date(), expectedRevision: revision }
 export const planningCommands = [
   z.object({ op: z.literal('budget.set'), data: budgetSchema }),
   z.object({ op: z.literal('budget.delete'), id: z.uuid() }),
   z
     .object({ op: z.literal('budget.copy'), from: monthSchema, to: monthSchema })
     .refine((v) => v.from !== v.to, 'Выберите другой месяц'),
-  z.object({ op: z.literal('recurring.save'), id: z.uuid().optional(), data: recurringSchema }),
-  z.object({ op: z.literal('recurring.toggle'), id: z.uuid(), active: z.boolean() }),
+  z.object({
+    op: z.literal('plan.save'),
+    id: z.uuid().optional(),
+    direction: directionSchema.default('expense'),
+    data: planSchema,
+  }),
+  z.object({ op: z.literal('plan.toggle'), id: z.uuid(), active: z.boolean() }),
+  z.object({ op: z.literal('plan.delete'), id: z.uuid() }),
   z
     .object({
-      op: z.literal('payment.pay'),
-      ...paymentKey,
-      expectedRevision: revision,
-      date: z.iso.date().refine((d) => d <= localDate(), 'Дата оплаты не может быть в будущем'),
+      op: z.literal('occurrence.confirm'),
+      ...dateKey,
+      date: pastDate('Дата операции не может быть в будущем'),
       mode: z.enum(['create', 'link']),
       accountId: z.uuid().optional(),
       amount: positiveAmount.optional(),
@@ -47,50 +50,60 @@ export const planningCommands = [
       if (v.mode === 'create' && (!v.accountId || !v.amount))
         ctx.addIssue({ code: 'custom', message: 'Укажите счёт и фактическую сумму' })
       if (v.mode === 'link' && !v.transactionId)
-        ctx.addIssue({ code: 'custom', message: 'Выберите уже записанный расход' })
+        ctx.addIssue({ code: 'custom', message: 'Выберите уже записанную операцию' })
     }),
-  z.object({ op: z.literal('payment.skip'), ...paymentKey, expectedRevision: revision }),
-  z.object({ op: z.literal('payment.unskip'), ...paymentKey, expectedRevision: revision }),
+  z.object({ op: z.literal('occurrence.skip'), ...dateKey }),
+  z.object({ op: z.literal('occurrence.unskip'), ...dateKey }),
+  z.object({
+    op: z.literal('occurrence.adjust'),
+    ...dateKey,
+    date: z.iso.date(),
+    amount: positiveAmount,
+  }),
 ] as const
 export const planningCommandSchema = z.discriminatedUnion('op', planningCommands)
 export type PlanningCommand = z.infer<typeof planningCommandSchema>
 export function isPlanningCommand(command: { op: string }): command is PlanningCommand {
-  return /^(budget\.|recurring\.|payment\.)/.test(command.op)
+  return /^(budget|plan|occurrence)\./.test(command.op)
 }
 
+const directionWord = (plan: Pick<Plan, 'direction'>) =>
+  plan.direction === 'income' ? 'доходом' : 'расходом'
+
+/** Ends the current settings yesterday; future undecided dates follow the new settings. */
 async function closeSchedule(db: WriteTransaction, id: string, today: string) {
   await db
-    .delete(paymentOccurrences)
+    .delete(planOccurrences)
     .where(
       and(
-        eq(paymentOccurrences.recurringId, id),
-        eq(paymentOccurrences.status, 'pending'),
-        gte(paymentOccurrences.dueDate, today),
+        eq(planOccurrences.planId, id),
+        eq(planOccurrences.status, 'pending'),
+        gte(planOccurrences.dueDate, today),
       ),
     )
   const versions = await db
     .select()
-    .from(recurringVersions)
-    .where(and(eq(recurringVersions.recurringId, id), isNull(recurringVersions.validTo)))
+    .from(planVersions)
+    .where(and(eq(planVersions.planId, id), isNull(planVersions.validTo)))
   for (const version of versions) {
     if (version.validFrom >= today)
-      await db.delete(recurringVersions).where(eq(recurringVersions.id, version.id))
+      await db.delete(planVersions).where(eq(planVersions.id, version.id))
     else
       await db
-        .update(recurringVersions)
+        .update(planVersions)
         .set({ validTo: addDays(today, -1) })
-        .where(eq(recurringVersions.id, version.id))
+        .where(eq(planVersions.id, version.id))
   }
 }
 async function addSchedule(
   db: WriteTransaction,
   id: string,
-  fields: RecurringFields,
+  fields: PlanFields,
   validFrom: string,
 ) {
-  await db.insert(recurringVersions).values({
+  await db.insert(planVersions).values({
     id: crypto.randomUUID(),
-    recurringId: id,
+    planId: id,
     title: fields.title,
     category: fields.category,
     amount: fields.amount,
@@ -104,36 +117,35 @@ async function addSchedule(
     validTo: null,
   })
 }
-async function resolvePayment(db: WriteTransaction, recurringId: string, dueDate: string) {
-  const [versions, occurrences, history] = await Promise.all([
-    db.select().from(recurringVersions).where(eq(recurringVersions.recurringId, recurringId)),
+async function resolveOccurrence(db: WriteTransaction, planId: string, dueDate: string) {
+  const [planRows, versions, occurrences, history] = await Promise.all([
+    db.select().from(plans).where(eq(plans.id, planId)),
+    db.select().from(planVersions).where(eq(planVersions.planId, planId)),
     db
       .select()
-      .from(paymentOccurrences)
-      .where(
-        and(
-          eq(paymentOccurrences.recurringId, recurringId),
-          eq(paymentOccurrences.dueDate, dueDate),
-        ),
-      ),
+      .from(planOccurrences)
+      .where(and(eq(planOccurrences.planId, planId), eq(planOccurrences.dueDate, dueDate))),
     db.select().from(transactions),
   ])
-  const payment = projectPayments(
+  const plan = planRows[0] as Plan | undefined
+  if (!plan) throw createError({ statusCode: 404, message: 'План не найден' })
+  const item = projectOccurrence(
     {
-      recurringVersions: versions as RecurringVersion[],
-      paymentOccurrences: occurrences as PaymentOccurrence[],
+      plans: [plan],
+      planVersions: versions as PlanVersion[],
+      planOccurrences: occurrences as PlanOccurrence[],
       transactions: history.filter((t) => !t.deletedAt) as Transaction[],
       deletedTransactions: history.filter((t) => t.deletedAt) as Transaction[],
     },
+    planId,
     dueDate,
-    dueDate,
-  )[0]
-  if (!payment)
+  )
+  if (!item)
     throw createError({
       statusCode: 404,
-      message: 'Платёж больше не запланирован на эту дату. Обновите календарь.',
+      message: 'Эта дата больше не запланирована. Обновите календарь.',
     })
-  return { payment, existing: occurrences[0], history }
+  return { plan, item, existing: occurrences[0], history }
 }
 export async function executePlanningCommand(
   db: WriteTransaction,
@@ -168,12 +180,16 @@ export async function executePlanningCommand(
         ).length
       return { copied, skipped: source.length - copied }
     }
-    case 'recurring.save': {
+    case 'plan.save': {
       const previous = command.id
-        ? (await db.select().from(recurringPayments).where(eq(recurringPayments.id, command.id)))[0]
+        ? (await db.select().from(plans).where(eq(plans.id, command.id)))[0]
         : null
-      if (command.id && !previous)
-        throw createError({ statusCode: 404, message: 'Расписание не найдено' })
+      if (command.id && !previous) throw createError({ statusCode: 404, message: 'План не найден' })
+      if (previous && previous.direction !== command.direction)
+        throw createError({
+          statusCode: 400,
+          message: 'Поступление нельзя превратить в платёж и наоборот. Создайте новый план.',
+        })
       if (command.data.accountId) {
         const [account] = await db
           .select()
@@ -182,24 +198,65 @@ export async function executePlanningCommand(
         if (!account || (account.archived && previous?.accountId !== account.id))
           throw createError({
             statusCode: 400,
-            message: 'Выберите действующий счёт или оплату без счёта по умолчанию',
+            message: 'Выберите действующий счёт или выбор счёта при подтверждении',
           })
       }
+      const once = command.data.frequency === 'once'
+      if (previous && (previous.frequency === 'once') !== once)
+        throw createError({
+          statusCode: 400,
+          message: 'Разовый план нельзя сделать регулярным и наоборот. Создайте новый план.',
+        })
       const id = command.id || crypto.randomUUID()
-      if (previous) {
+      if (!previous) {
+        await db.insert(plans).values({
+          id,
+          ...command.data,
+          active: true,
+          direction: command.direction,
+          source: 'manual',
+          sourceId: null,
+        })
+        await addSchedule(db, id, command.data, command.data.startDate)
+      } else if (once) {
+        // A one-off plan has a single date: editing replaces it while nothing is confirmed.
+        const done = await db
+          .select()
+          .from(planOccurrences)
+          .where(
+            and(
+              eq(planOccurrences.planId, id),
+              inArray(planOccurrences.status, ['paid', 'closed']),
+            ),
+          )
+          .limit(1)
+        if (done.length)
+          throw createError({
+            statusCode: 409,
+            message: 'Разовый план уже выполнен. Для новой даты создайте новый план.',
+          })
+        await db.delete(planOccurrences).where(eq(planOccurrences.planId, id))
+        await db.delete(planVersions).where(eq(planVersions.planId, id))
+        await db
+          .update(plans)
+          .set({ ...command.data, active: true })
+          .where(eq(plans.id, id))
+        await addSchedule(db, id, command.data, command.data.startDate)
+      } else {
         await closeSchedule(db, id, localDate())
-        await db.update(recurringPayments).set(command.data).where(eq(recurringPayments.id, id))
-      } else await db.insert(recurringPayments).values({ id, ...command.data, active: true })
-      if (!previous || previous.active)
-        await addSchedule(db, id, command.data, previous ? localDate() : command.data.startDate)
+        await db.update(plans).set(command.data).where(eq(plans.id, id))
+        if (previous.active) await addSchedule(db, id, command.data, localDate())
+      }
       break
     }
-    case 'recurring.toggle': {
-      const [previous] = await db
-        .select()
-        .from(recurringPayments)
-        .where(eq(recurringPayments.id, command.id))
-      if (!previous) throw createError({ statusCode: 404, message: 'Расписание не найдено' })
+    case 'plan.toggle': {
+      const [previous] = await db.select().from(plans).where(eq(plans.id, command.id))
+      if (!previous) throw createError({ statusCode: 404, message: 'План не найден' })
+      if (previous.frequency === 'once')
+        throw createError({
+          statusCode: 400,
+          message: 'Разовый план не ставится на паузу: отмените или перенесите его дату.',
+        })
       if (previous.active === command.active) break
       if (command.active && previous.endDate && previous.endDate < localDate())
         throw createError({
@@ -207,25 +264,44 @@ export async function executePlanningCommand(
           message: 'Продлите дату окончания перед возобновлением',
         })
       await closeSchedule(db, command.id, localDate())
-      await db
-        .update(recurringPayments)
-        .set({ active: command.active })
-        .where(eq(recurringPayments.id, command.id))
-      if (command.active)
-        await addSchedule(db, command.id, previous as RecurringFields, localDate())
+      await db.update(plans).set({ active: command.active }).where(eq(plans.id, command.id))
+      if (command.active) await addSchedule(db, command.id, previous as PlanFields, localDate())
       break
     }
-    case 'payment.pay':
-    case 'payment.skip':
-    case 'payment.unskip': {
-      const { payment, existing, history } = await resolvePayment(
+    case 'plan.delete': {
+      const [plan] = await db.select().from(plans).where(eq(plans.id, command.id))
+      if (!plan) throw createError({ statusCode: 404, message: 'План не найден' })
+      const confirmed = await db
+        .select()
+        .from(planOccurrences)
+        .where(and(eq(planOccurrences.planId, plan.id), eq(planOccurrences.status, 'paid')))
+        .limit(1)
+      if (confirmed.length)
+        throw createError({
+          statusCode: 409,
+          message:
+            plan.frequency === 'once'
+              ? 'План уже подтверждён операцией. Удалите операцию, если план не выполнялся.'
+              : 'У плана есть подтверждённые даты. Поставьте его на паузу, чтобы сохранить историю.',
+        })
+      await db.delete(planOccurrences).where(eq(planOccurrences.planId, plan.id))
+      await db.delete(planVersions).where(eq(planVersions.planId, plan.id))
+      await db.delete(plans).where(eq(plans.id, plan.id))
+      break
+    }
+    case 'occurrence.confirm':
+    case 'occurrence.skip':
+    case 'occurrence.unskip':
+    case 'occurrence.adjust': {
+      const { plan, item, existing, history } = await resolveOccurrence(
         db,
-        command.recurringId,
+        command.planId,
         command.dueDate,
       )
-      if (command.op === 'payment.pay' && payment.status === 'paid')
-        return { alreadyPaid: true, transactionId: payment.transactionId! }
-      if (command.op === 'payment.skip' && payment.status === 'skipped') return { ok: true }
+      // Repeating the same confirmation or cancellation is harmless and needs no fresh revision.
+      if (command.op === 'occurrence.confirm' && item.status === 'paid')
+        return { alreadyPaid: true, transactionId: item.transactionId! }
+      if (command.op === 'occurrence.skip' && item.status === 'skipped') return { ok: true }
       if (currentRevision !== command.expectedRevision)
         throw createError({
           statusCode: 409,
@@ -233,54 +309,75 @@ export async function executePlanningCommand(
         })
       const snapshot = {
         id: existing?.id || crypto.randomUUID(),
-        recurringId: payment.recurringId,
-        dueDate: payment.dueDate,
-        title: payment.title,
-        category: payment.category,
-        amount: payment.amount,
-        accountId: payment.accountId,
-        note: payment.note,
+        planId: item.planId,
+        dueDate: item.dueDate,
+        title: item.title,
+        category: item.category,
+        amount: item.amount,
+        accountId: item.accountId,
+        note: item.note,
+        movedTo: item.movedTo,
       }
-      if (command.op === 'payment.unskip') {
-        if (payment.status !== 'skipped' || !existing)
-          throw createError({ statusCode: 400, message: 'Этот платёж не был пропущен' })
+      const key = [planOccurrences.planId, planOccurrences.dueDate]
+      if (command.op === 'occurrence.unskip') {
+        if ((item.status !== 'skipped' && item.status !== 'closed') || !existing)
+          throw createError({ statusCode: 400, message: 'Эта дата не была отменена' })
         await db
-          .update(paymentOccurrences)
+          .update(planOccurrences)
           .set({ status: 'pending', transactionId: null })
-          .where(eq(paymentOccurrences.id, existing.id))
+          .where(eq(planOccurrences.id, existing.id))
         break
       }
-      if (payment.status === 'paid' || payment.status === 'deleted')
+      if (command.op === 'occurrence.adjust') {
+        if (item.status !== 'pending')
+          throw createError({
+            statusCode: 400,
+            message: 'Изменить можно только дату, которая ещё ждёт подтверждения',
+          })
+        const movedTo = command.date === item.dueDate ? null : command.date
+        await db
+          .insert(planOccurrences)
+          .values({
+            ...snapshot,
+            amount: command.amount,
+            movedTo,
+            status: 'pending',
+            transactionId: null,
+          })
+          .onConflictDoUpdate({ target: key, set: { amount: command.amount, movedTo } })
+        break
+      }
+      if (item.status === 'paid' || item.status === 'deleted')
         throw createError({
           statusCode: 409,
           message:
-            payment.status === 'deleted'
-              ? 'Связанный расход удалён. Восстановите его вместо повторной оплаты.'
-              : 'Платёж уже оплачен',
+            item.status === 'deleted'
+              ? 'Связанная операция удалена. Восстановите её вместо повторного подтверждения.'
+              : 'Дата уже подтверждена',
         })
-      if (command.op === 'payment.skip') {
+      if (command.op === 'occurrence.skip') {
         await db
-          .insert(paymentOccurrences)
+          .insert(planOccurrences)
           .values({ ...snapshot, status: 'skipped', transactionId: null })
-          .onConflictDoUpdate({
-            target: [paymentOccurrences.recurringId, paymentOccurrences.dueDate],
-            set: { status: 'skipped', transactionId: null },
-          })
+          .onConflictDoUpdate({ target: key, set: { status: 'skipped', transactionId: null } })
         break
       }
       let transactionId = command.transactionId
       if (command.mode === 'link') {
         const transaction = history.find((t) => t.id === transactionId)
-        if (!transaction || transaction.deletedAt || transaction.kind !== 'expense')
-          throw createError({ statusCode: 400, message: 'Выберите действующий расход' })
+        if (!transaction || transaction.deletedAt || transaction.kind !== plan.direction)
+          throw createError({
+            statusCode: 400,
+            message: `Выберите действующую операцию, которая является ${directionWord(plan)}`,
+          })
         const linked = await db
           .select()
-          .from(paymentOccurrences)
-          .where(eq(paymentOccurrences.transactionId, transactionId!))
+          .from(planOccurrences)
+          .where(eq(planOccurrences.transactionId, transactionId!))
         if (linked.length)
           throw createError({
             statusCode: 409,
-            message: 'Этот расход уже связан с другим платежом',
+            message: 'Эта операция уже связана с другим планом',
           })
       } else {
         const [account] = await db
@@ -292,19 +389,19 @@ export async function executePlanningCommand(
         transactionId = crypto.randomUUID()
         await db.insert(transactions).values({
           id: transactionId,
-          kind: 'expense',
+          kind: plan.direction,
           amount: command.amount!,
           accountId: account.id,
-          category: payment.category,
-          description: payment.title,
+          category: item.category,
+          description: item.title,
           date: command.date,
         })
       }
       await db
-        .insert(paymentOccurrences)
+        .insert(planOccurrences)
         .values({ ...snapshot, status: 'paid', transactionId: transactionId! })
         .onConflictDoUpdate({
-          target: [paymentOccurrences.recurringId, paymentOccurrences.dueDate],
+          target: key,
           set: { status: 'paid', transactionId: transactionId! },
         })
       return { transactionId }

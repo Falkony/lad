@@ -11,9 +11,9 @@ const empty = (): Workspace => ({
   isDemo: false,
   revision: '0',
   budgets: [],
-  recurringPayments: [],
-  recurringVersions: [],
-  paymentOccurrences: [],
+  plans: [],
+  planVersions: [],
+  planOccurrences: [],
 })
 const guardedOps = new Set([
   'account.update',

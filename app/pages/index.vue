@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { accountBalance, money, sumAmounts, localDate } from '../../shared/money'
-import { projectPayments, addDays } from '../../shared/planning'
+import { projectPlans, overduePlans, isOpen, addDays } from '../../shared/planning'
+import type { ProjectedOccurrence } from '../../shared/planning-types'
 
 const { workspace: w, loading, pending, command } = useWorkspace()
 const operationOpen = ref(false)
@@ -24,20 +25,21 @@ const expenses = computed(() =>
 const balance = computed(() =>
   sumAmounts(w.value.accounts.map((a) => accountBalance(a, w.value.transactions))),
 )
+const overdueCount = computed(() => overduePlans(w.value, localDate()).length)
 const upcoming = computed(() =>
   [
-    ...w.value.events.map((e) => ({ ...e, recurringId: null as string | null })),
-    ...projectPayments(w.value, localDate(), addDays(localDate(), 90))
-      .filter((p) => ['pending', 'deleted'].includes(p.status))
+    ...w.value.events.map((e) => ({ ...e, plan: null as ProjectedOccurrence | null })),
+    ...projectPlans(w.value, localDate(), addDays(localDate(), 90))
+      .filter(isOpen)
       .map((p) => ({
         id: p.id,
         title: p.title,
-        date: p.dueDate,
-        kind: 'payment',
-        amount: p.amount,
+        date: p.date,
+        kind: p.direction === 'income' ? 'income' : 'payment',
+        amount: p.amount as string | null,
         done: false,
         note: p.note,
-        recurringId: p.recurringId,
+        plan: p,
       })),
   ]
     .filter((e) => !e.done && e.date >= localDate())
@@ -290,6 +292,13 @@ function progress(saved: string, target: string) {
           ><AppIcon name="calendar" :size="18"
         /></NuxtLink>
       </div>
+      <NuxtLink v-if="overdueCount" to="/plans" class="upcoming-row overdue-row"
+        ><div class="date-tile"><AppIcon name="bell" :size="18" /></div>
+        <div>
+          <strong>Требуют решения: {{ overdueCount }}</strong
+          ><span>Срок прошёл — подтвердите, перенесите или отмените</span>
+        </div></NuxtLink
+      >
       <NuxtLink
         v-for="event in upcoming"
         :key="event.id"
@@ -302,16 +311,21 @@ function progress(saved: string, target: string) {
         <div>
           <strong>{{ event.title }}</strong
           ><span>{{
-            event.recurringId
-              ? 'Повторяющийся платёж'
-              : event.kind === 'payment'
-                ? 'Плановый платёж'
-                : 'Личные планы'
+            !event.plan
+              ? 'Личные планы'
+              : event.plan.direction === 'income'
+                ? 'Ожидаемое поступление'
+                : event.plan.frequency === 'once'
+                  ? 'Разовый платёж'
+                  : 'Регулярный платёж'
           }}</span>
         </div>
-        <strong v-if="event.amount" class="upcoming-amount">{{
-          money(event.amount, true)
-        }}</strong></NuxtLink
+        <strong
+          v-if="event.amount"
+          class="upcoming-amount"
+          :class="{ 'text-green': event.kind === 'income' }"
+          >{{ event.kind === 'income' ? '+' : '' }}{{ money(event.amount, true) }}</strong
+        ></NuxtLink
       >
       <div v-if="!upcoming.length" class="empty-state compact">
         <AppIcon name="calendar" :size="26" />

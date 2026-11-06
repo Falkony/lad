@@ -12,9 +12,9 @@ import {
   settings,
   workspaceGuard,
   budgets,
-  recurringPayments,
-  recurringVersions,
-  paymentOccurrences,
+  plans,
+  planVersions,
+  planOccurrences,
 } from '../db/schema'
 import {
   accountSchema,
@@ -58,9 +58,9 @@ export async function readWorkspace(): Promise<Workspace> {
         db.select().from(settings),
         db.select().from(workspaceGuard),
         db.select().from(budgets),
-        db.select().from(recurringPayments).orderBy(recurringPayments.title),
-        db.select().from(recurringVersions),
-        db.select().from(paymentOccurrences),
+        db.select().from(plans).orderBy(plans.title),
+        db.select().from(planVersions),
+        db.select().from(planOccurrences),
       ])
       return {
         accounts: a,
@@ -73,9 +73,9 @@ export async function readWorkspace(): Promise<Workspace> {
         isDemo: meta.some((x) => x.key === 'demo' && x.value === 'true'),
         revision: guard[0]!.revision,
         budgets: b,
-        recurringPayments: r,
-        recurringVersions: v,
-        paymentOccurrences: p,
+        plans: r,
+        planVersions: v,
+        planOccurrences: p,
       } as Workspace
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -215,20 +215,12 @@ export async function executeCommand(command: Command) {
       }
       case 'account.delete': {
         const references = await Promise.all([
+          db.select().from(plans).where(eq(plans.accountId, command.id)).limit(1),
+          db.select().from(planVersions).where(eq(planVersions.accountId, command.id)).limit(1),
           db
             .select()
-            .from(recurringPayments)
-            .where(eq(recurringPayments.accountId, command.id))
-            .limit(1),
-          db
-            .select()
-            .from(recurringVersions)
-            .where(eq(recurringVersions.accountId, command.id))
-            .limit(1),
-          db
-            .select()
-            .from(paymentOccurrences)
-            .where(eq(paymentOccurrences.accountId, command.id))
+            .from(planOccurrences)
+            .where(eq(planOccurrences.accountId, command.id))
             .limit(1),
         ])
         if (references.some((rows) => rows.length))
@@ -306,16 +298,21 @@ export async function executeCommand(command: Command) {
             statusCode: 400,
             message: 'Корректировка создана сверкой. Для изменения выполните новую сверку.',
           })
-        if (previous && command.data.kind !== 'expense') {
-          const linked = await db
-            .select()
-            .from(paymentOccurrences)
-            .where(eq(paymentOccurrences.transactionId, previous.id))
+        if (previous) {
+          // A transaction confirming a plan keeps the plan's direction: an expense for a
+          // payment, an income for an expected income.
+          const [link] = await db
+            .select({ direction: plans.direction })
+            .from(planOccurrences)
+            .innerJoin(plans, eq(plans.id, planOccurrences.planId))
+            .where(eq(planOccurrences.transactionId, previous.id))
             .limit(1)
-          if (linked.length)
+          if (link && command.data.kind !== link.direction)
             throw createError({
               statusCode: 409,
-              message: 'Операция связана с платежом календаря и должна оставаться расходом',
+              message: `Операция подтверждает план и должна оставаться ${
+                link.direction === 'income' ? 'доходом' : 'расходом'
+              }`,
             })
         }
         const knownAccounts = await db.select().from(accounts)
@@ -509,9 +506,9 @@ export async function executeCommand(command: Command) {
             message: 'Пространство изменилось после предпросмотра. Загрузите копию заново.',
           })
         const backup = command.backup
-        await db.delete(paymentOccurrences)
-        await db.delete(recurringVersions)
-        await db.delete(recurringPayments)
+        await db.delete(planOccurrences)
+        await db.delete(planVersions)
+        await db.delete(plans)
         await db.delete(budgets)
         await db.delete(transactions)
         await db.delete(accounts)
@@ -532,20 +529,18 @@ export async function executeCommand(command: Command) {
         for (const rows of chunks(backup.shopping)) await db.insert(shopping).values(rows)
         for (const rows of chunks(backup.obligations)) await db.insert(obligations).values(rows)
         for (const rows of chunks(backup.budgets)) await db.insert(budgets).values(rows)
-        for (const rows of chunks(backup.recurringPayments))
-          await db.insert(recurringPayments).values(rows)
-        for (const rows of chunks(backup.recurringVersions))
-          await db.insert(recurringVersions).values(rows)
-        for (const rows of chunks(backup.paymentOccurrences))
-          await db.insert(paymentOccurrences).values(rows)
+        for (const rows of chunks(backup.plans)) await db.insert(plans).values(rows)
+        for (const rows of chunks(backup.planVersions)) await db.insert(planVersions).values(rows)
+        for (const rows of chunks(backup.planOccurrences))
+          await db.insert(planOccurrences).values(rows)
         await db.insert(settings).values({ key: 'demo', value: String(backup.isDemo) })
         break
       }
       case 'workspace.reset': {
         await db.transaction(async (tx) => {
-          await tx.delete(paymentOccurrences)
-          await tx.delete(recurringVersions)
-          await tx.delete(recurringPayments)
+          await tx.delete(planOccurrences)
+          await tx.delete(planVersions)
+          await tx.delete(plans)
           await tx.delete(budgets)
           await tx.delete(transactions)
           await tx.delete(accounts)
@@ -578,7 +573,7 @@ async function seedDemo() {
       tx.select().from(shopping),
       tx.select().from(obligations),
       tx.select().from(budgets),
-      tx.select().from(recurringPayments),
+      tx.select().from(plans),
     ])
     if (populated.some((rows) => rows.length))
       throw createError({
@@ -721,15 +716,6 @@ async function seedDemo() {
     await tx.insert(events).values([
       {
         id: crypto.randomUUID(),
-        title: 'Платёж по ипотеке',
-        date: day(3),
-        kind: 'payment',
-        amount: '4250000',
-        done: false,
-        note: 'Проверьте остаток на счёте накануне платежа',
-      },
-      {
-        id: crypto.randomUUID(),
         title: 'Запланировать выходные',
         date: day(1),
         kind: 'task',
@@ -813,24 +799,48 @@ async function seedDemo() {
         limit: limit!,
       })),
     )
-    await executePlanningCommand(
-      tx,
+    const demoPlans = [
       {
-        op: 'recurring.save',
-        data: {
-          title: 'Интернет и связь',
-          category: 'Дом',
-          amount: '150000',
-          accountId: main,
-          frequency: 'monthly',
-          interval: 1,
-          startDate: day(5),
-          endDate: null,
-          note: 'Проверить сумму в личном кабинете перед оплатой',
-        },
+        direction: 'expense' as const,
+        title: 'Интернет и связь',
+        category: 'Дом',
+        amount: '150000',
+        accountId: main,
+        frequency: 'monthly' as const,
+        startDate: day(5),
+        note: 'Проверить сумму в личном кабинете перед оплатой',
       },
-      '0',
-    )
+      {
+        direction: 'expense' as const,
+        title: 'Платёж по ипотеке',
+        category: 'Дом',
+        amount: '4250000',
+        accountId: main,
+        frequency: 'once' as const,
+        startDate: day(3),
+        note: 'Проверьте остаток на счёте накануне платежа',
+      },
+      {
+        direction: 'income' as const,
+        title: 'Зарплата',
+        category: 'Зарплата',
+        amount: '18500000',
+        accountId: main,
+        frequency: 'monthly' as const,
+        startDate: day(26),
+        note: '',
+      },
+    ]
+    for (const { direction, ...plan } of demoPlans)
+      await executePlanningCommand(
+        tx,
+        {
+          op: 'plan.save',
+          direction,
+          data: { ...plan, interval: 1, endDate: null },
+        },
+        '0',
+      )
     await tx
       .insert(settings)
       .values({ key: 'demo', value: 'true' })

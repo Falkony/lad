@@ -185,6 +185,31 @@
   font-size: 10px;
   color: #a0ad94;
 }
+.recurring-rule-footer > .rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.overdue-panel {
+  margin: 0 0 22px;
+  border-left: 3px solid #e0b49b;
+}
+.calendar-event.income {
+  color: #4f7d5f;
+  background: #e6f1ea;
+}
+.mobile-event-dots i.income {
+  background: #6f9d7f;
+}
+.calendar-event.closed {
+  color: #a0aa92;
+  background: #f0f2eb;
+}
+.budget-plan-strip {
+  margin-bottom: 22px;
+}
 .recurring-month-panel {
   margin-top: 22px;
 }

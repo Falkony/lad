@@ -18,8 +18,8 @@ const sections = [
   { key: 'shopping', label: 'Товары' },
   { key: 'obligations', label: 'Обязательства' },
   { key: 'budgets', label: 'Лимиты бюджета' },
-  { key: 'recurringPayments', label: 'Расписания платежей' },
-  { key: 'paymentOccurrences', label: 'Отметки платежей' },
+  { key: 'plans', label: 'Планы поступлений и платежей' },
+  { key: 'planOccurrences', label: 'Отметки дат планов' },
 ] as const
 async function updatePreview() {
   await refresh()

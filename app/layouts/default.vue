@@ -28,7 +28,7 @@ const links = [
   { to: '/accounts', label: 'Счета', icon: 'card' },
   { to: '/transactions', label: 'Операции', icon: 'wallet' },
   { to: '/budgets', label: 'Бюджеты', icon: 'budget' },
-  { to: '/recurring', label: 'Регулярные платежи', icon: 'repeat' },
+  { to: '/plans', label: 'Поступления и платежи', icon: 'repeat' },
   { to: '/goals', label: 'Цели и желания', icon: 'target' },
   { to: '/obligations', label: 'Кредиты и долги', icon: 'bank' },
   { to: '/calendar', label: 'Календарь', icon: 'calendar' },

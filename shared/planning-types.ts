@@ -4,41 +4,61 @@ export interface Budget {
   category: string
   limit: string
 }
-export interface RecurringFields {
+export type PlanDirection = 'expense' | 'income'
+export type PlanFrequency = 'once' | 'monthly' | 'weekly' | 'yearly'
+export type PlanSource = 'manual' | 'obligation' | 'goal'
+export interface PlanFields {
   title: string
   category: string
   amount: string
   accountId: string | null
-  frequency: 'monthly' | 'weekly' | 'yearly'
+  frequency: PlanFrequency
   interval: number
   startDate: string
   endDate: string | null
   note: string
 }
-export interface RecurringPayment extends RecurringFields {
+/** A planned income or payment: one-off (`frequency: 'once'`) or recurring. */
+export interface Plan extends PlanFields {
   id: string
   active: boolean
+  direction: PlanDirection
+  source: PlanSource
+  sourceId: string | null
 }
-export interface RecurringVersion extends RecurringFields {
+/** Settings of a plan for a period; editing a recurring plan closes one version and opens another. */
+export interface PlanVersion extends PlanFields {
   id: string
-  recurringId: string
+  planId: string
   validFrom: string
   validTo: string | null
 }
-export interface PaymentOccurrence {
+export type OccurrenceStatus = 'pending' | 'paid' | 'skipped' | 'closed'
+/**
+ * A decision about one scheduled date, keyed by the plan and its original date (`dueDate`):
+ * confirmation (paid), cancellation (skipped), a move (`movedTo`) or a changed amount (pending).
+ * `closed` marks legacy calendar payments that were ticked off without a recorded transaction.
+ */
+export interface PlanOccurrence {
   id: string
-  recurringId: string
+  planId: string
   dueDate: string
   title: string
   category: string
   amount: string
   accountId: string | null
   note: string
-  status: 'pending' | 'paid' | 'skipped'
+  status: OccurrenceStatus
   transactionId: string | null
+  movedTo: string | null
 }
-export interface ProjectedPayment extends Omit<PaymentOccurrence, 'status'> {
-  status: 'pending' | 'paid' | 'skipped' | 'deleted'
+export interface ProjectedOccurrence extends Omit<PlanOccurrence, 'status'> {
+  /** `deleted`: confirmed, but the linked transaction was deleted afterwards. */
+  status: OccurrenceStatus | 'deleted'
+  direction: PlanDirection
+  frequency: PlanFrequency
+  /** The effective date: `movedTo` when the date was moved, otherwise `dueDate`. */
+  date: string
   actualAmount: string | null
   actualDate: string | null
 }

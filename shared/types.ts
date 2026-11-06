@@ -71,9 +71,9 @@ export interface Obligation {
 }
 export interface Workspace {
   budgets: import('./planning-types').Budget[]
-  recurringPayments: import('./planning-types').RecurringPayment[]
-  recurringVersions: import('./planning-types').RecurringVersion[]
-  paymentOccurrences: import('./planning-types').PaymentOccurrence[]
+  plans: import('./planning-types').Plan[]
+  planVersions: import('./planning-types').PlanVersion[]
+  planOccurrences: import('./planning-types').PlanOccurrence[]
   accounts: Account[]
   transactions: Transaction[]
   deletedTransactions: Transaction[]
